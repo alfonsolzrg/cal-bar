@@ -1,0 +1,6 @@
+window.cal-bar-reminder { background-color: #101827; color: #f4f7ff; }
+window.cal-bar-dimmer { background-color: rgba(0, 0, 0, 0.72); }
+.reminder-eyebrow { color: #86c7ff; font-weight: bold; letter-spacing: 2px; }
+.reminder-title { font-size: 44px; font-weight: bold; }
+.reminder-time { color: #bdcce0; font-size: 22px; }
+.cal-bar-reminder button { padding: 14px 30px; font-size: 18px; }

@@ -1,0 +1,8 @@
+{
+  "name": "cal-bar",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "/usr/bin/python3 -m unittest discover -s tests -p 'test_*.py' && node --check extension.js && node --check prefs.js"
+  }
+}

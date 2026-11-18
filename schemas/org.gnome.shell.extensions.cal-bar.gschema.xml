@@ -1,0 +1,13 @@
+<schemalist>
+  <schema id="org.gnome.shell.extensions.cal-bar" path="/org/gnome/shell/extensions/cal-bar/">
+    <key name="app-enabled" type="b"><default>true</default><summary>Run the companion app and show its panel button</summary></key>
+    <key name="connection-method" type="s"><default>'gnome'</default><choices><choice value="gnome"/><choice value="direct"/></choices><summary>Calendar backend (direct OAuth is hidden)</summary></key>
+    <key name="all-calendars" type="b"><default>true</default><summary>Include all connected GNOME calendars</summary></key>
+    <key name="selected-calendars" type="as"><default>[]</default><summary>Selected Evolution Data Server calendar source IDs</summary></key>
+    <key name="credentials-path" type="s"><default>''</default><summary>Google Desktop OAuth credentials JSON path</summary></key>
+    <key name="account-revision" type="i"><default>0</default><summary>Account connection change counter</summary></key>
+    <key name="calendar-id" type="s"><default>'primary'</default><summary>Google Calendar ID</summary></key>
+    <key name="reminder-minutes" type="i"><default>5</default><range min="0" max="60"/><summary>Minutes before a meeting to remind</summary></key>
+    <key name="reminders-enabled" type="b"><default>true</default><summary>Show full-screen reminders</summary></key>
+  </schema>
+</schemalist>

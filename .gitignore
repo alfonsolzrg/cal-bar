@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+schemas/gschemas.compiled
+*.zip
+client_secret*.json
+credentials*.json
+dist/
+.env
+.env.*
+*.log
+*.tar.gz
