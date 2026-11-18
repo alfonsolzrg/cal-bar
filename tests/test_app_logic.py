@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from app_logic import (Event, due_reminders, meeting_status, normalize_events, panel_state,
+from app_logic import (Event, LOOKAHEAD_SECONDS, format_duration, due_reminders, meeting_status, normalize_events, panel_state,
                        safe_url, timestamp, visible_events)
 from companion_runtime import HelperJob, SeenStore
 from gi.repository import GLib
@@ -41,6 +41,24 @@ class SchedulingTests(unittest.TestCase):
         self.assertEqual(panel_state(events, NOW, 5)['label'], 'Live · now')
         self.assertEqual(panel_state([], NOW, 5, error='offline')['icon'], 'dialog-warning-symbolic')
         self.assertFalse(panel_state(events, NOW, 5, running=False)['visible'])
+
+    def test_compact_countdowns_and_unit_boundaries(self):
+        for seconds, expected in [(1, '1m'), (45 * 60, '45m'), (3599, '1h'),
+                (3600, '1h'), (2 * 3600 + 15 * 60, '2h 15m'), (1172 * 60, '19h 32m'),
+                (86400 - 1, '1d'), (86400, '1d'), (86400 + 3 * 3600, '1d 3h'),
+                (7 * 86400, '1w'), (9 * 86400 + 3600, '1w 2d'), (14 * 86400, '2w')]:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(format_duration(seconds), expected)
+        event = Event('tomorrow', 'Planning', NOW + 1172 * 60, NOW + 1172 * 60 + 1800)
+        self.assertEqual(panel_state([event], NOW, 5)['label'], 'Planning · in 19h 32m')
+
+    def test_two_week_window_includes_current_and_second_week_events(self):
+        events = [Event('ongoing', 'Ongoing', NOW - 60, NOW + 60),
+                  Event('next-week', 'Next week', NOW + 9 * 86400, NOW + 9 * 86400 + 1800),
+                  Event('last-minute', 'Last minute', NOW + LOOKAHEAD_SECONDS - 60, NOW + LOOKAHEAD_SECONDS + 1800),
+                  Event('outside', 'Outside', NOW + LOOKAHEAD_SECONDS, NOW + LOOKAHEAD_SECONDS + 1800)]
+        self.assertEqual([event.id for event in visible_events(events, NOW)],
+                         ['ongoing', 'next-week', 'last-minute'])
 
     def test_reminder_boundary_deduplication_resume_and_disabled_setting(self):
         event = Event('next', 'Next', NOW + 300, NOW + 600)

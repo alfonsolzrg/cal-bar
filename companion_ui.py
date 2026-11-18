@@ -6,7 +6,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Adw, Gdk, GLib, Gtk
-from app_logic import ICONS, meeting_status, safe_url, visible_events
+from app_logic import LOOKAHEAD_DAYS, ICONS, meeting_status, safe_url, visible_events
 from companion_runtime import run_helper
 
 TITLES = {'agenda': 'Cal Bar — Meetings', 'reminder': 'Cal Bar — Reminder', 'dimmer': 'Cal Bar — Dimmer'}
@@ -100,7 +100,7 @@ class AgendaWindow(Gtk.ApplicationWindow):
             next_child = child.get_next_sibling()
             self.list.remove(child)
             child = next_child
-        self.message.set_text(self.app.error or 'Next 7 days · expand an event for links and invitation replies')
+        self.message.set_text(self.app.error or f'Next {LOOKAHEAD_DAYS} days · expand an event for links and invitation replies')
         events = visible_events(self.app.events, time.time())
         if not events:
             self.list.append(Gtk.Label(label='No timed meetings scheduled', margin_top=32, margin_bottom=32))

@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 import sys
 
+from app_logic import LOOKAHEAD_DAYS
+
 DEPENDENCIES = ('Install the GNOME calendar integration: sudo apt install python3-gi '
                 'gir1.2-ecal-2.0 gir1.2-edataserver-1.2 gir1.2-goa-1.0')
 
@@ -174,7 +176,7 @@ def read_events(calendars, ecal, eds, ical, now=None):
                 return True
             # Surface backend/query errors before ECal's void recurrence API.
             begin = datetime.fromtimestamp(now, timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-            finish = datetime.fromtimestamp(now + 7 * 86400, timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+            finish = datetime.fromtimestamp(now + LOOKAHEAD_DAYS * 86400, timezone.utc).strftime('%Y%m%dT%H%M%SZ')
             ok, objects = client.get_object_list_sync(
                 f'(occur-in-time-range? (make-time "{begin}") (make-time "{finish}"))', None)
             if not ok:
@@ -182,7 +184,7 @@ def read_events(calendars, ecal, eds, ical, now=None):
             # Fetch each UID with its full exception set: range queries can omit
             # declined exceptions while returning their recurring master.
             for uid in {comp.get_uid() for comp in objects if comp.get_uid()}:
-                client.generate_instances_for_uid_sync(uid, now, now + 7 * 86400, None, collect, None)
+                client.generate_instances_for_uid_sync(uid, now, now + LOOKAHEAD_DAYS * 86400, None, collect, None)
         except Exception:
             warnings.append(f"Could not read {info['name']} ({info['account']}). Check calendar access in GNOME Online Accounts.")
     unique = {(item['id'], item['start']['dateTime']): item for item in items}

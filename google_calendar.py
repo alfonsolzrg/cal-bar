@@ -14,6 +14,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
+from app_logic import LOOKAHEAD_DAYS
+
 TOKEN_URL = 'https://oauth2.googleapis.com/token'
 SCOPE = 'https://www.googleapis.com/auth/calendar.events.readonly'
 
@@ -116,7 +118,7 @@ def access_token(client, keyring):
 
 def list_events(token, calendar_id):
     now = datetime.now(timezone.utc)
-    params = {'timeMin': now.isoformat(), 'timeMax': (now + timedelta(days=7)).isoformat(),
+    params = {'timeMin': now.isoformat(), 'timeMax': (now + timedelta(days=LOOKAHEAD_DAYS)).isoformat(),
               'singleEvents': 'true', 'orderBy': 'startTime', 'maxResults': 250}
     items = []
     while True:

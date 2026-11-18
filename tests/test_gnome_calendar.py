@@ -39,6 +39,24 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(len(gnome.selected_calendars(calendars, ['work', 'home'])), 2)
         self.assertEqual(gnome.selected_calendars(calendars, []), [])
 
+    def test_gnome_query_and_recurrence_expansion_use_two_weeks(self):
+        client = Mock()
+        obj = Mock()
+        obj.get_uid.return_value = 'invite'
+        client.get_object_list_sync.return_value = (True, [obj])
+        client.get_backend_property_sync.return_value = (False, '')
+        ecal = SimpleNamespace(Client=Mock(), ClientSourceType=SimpleNamespace(EVENTS=0))
+        ecal.Client.connect_sync.return_value = client
+        ical = SimpleNamespace(Timezone=Mock())
+        now = 1795003200  # 2026-11-18 12:00 UTC
+        info = dict(id='work', name='Work', account='me@example.com', needsAttention=False)
+        items, warnings = gnome.read_events([(Mock(), info)], ecal, Mock(), ical, now=now)
+        self.assertEqual((items, warnings), ([], []))
+        client.generate_instances_for_uid_sync.assert_called_once()
+        args = client.generate_instances_for_uid_sync.call_args.args
+        self.assertEqual(args[:3], ('invite', now, now + 14 * 86400))
+        self.assertIn('20261202T120000Z', client.get_object_list_sync.call_args.args[0])
+
 
 try:
     _, _, _, ICAL = gnome.load_libraries()

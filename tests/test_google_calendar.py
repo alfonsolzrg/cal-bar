@@ -1,4 +1,6 @@
 import unittest
+from datetime import datetime
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 import google_calendar as google
 
@@ -28,6 +30,10 @@ class CalendarTests(unittest.TestCase):
             self.assertEqual(google.list_events('token', 'shared@example.com'), [{'id': 'a'}, {'id': 'b'}])
             self.assertIn('shared%40example.com/events?', request.call_args_list[0].args[0])
             self.assertIn('pageToken=page2', request.call_args_list[1].args[0])
+            query = parse_qs(urlsplit(request.call_args_list[0].args[0]).query)
+            start = datetime.fromisoformat(query['timeMin'][0])
+            end = datetime.fromisoformat(query['timeMax'][0])
+            self.assertEqual((end - start).total_seconds(), 14 * 86400)
 
     def test_disconnected_never_requests_google(self):
         with patch.object(google, 'request_json') as request:

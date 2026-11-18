@@ -57,7 +57,7 @@ cal-bar status             # Inspect the app version and bridge status
 
 ## Meeting list and invitation actions
 
-The top bar shows the current meeting, or the next meeting with its countdown. 
+The top bar shows the current meeting, or the next meeting within two weeks. Countdowns use compact labels like `45m`, `2h 15m`, `1d 3h`, and `1w 2d`.
 Expand an event to reveal:
 
 - **Join meeting**, detecting Google Meet, Zoom, or Teams conference links.

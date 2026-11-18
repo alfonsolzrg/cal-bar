@@ -4,6 +4,9 @@ from datetime import datetime
 import math
 from urllib.parse import urlsplit
 
+LOOKAHEAD_DAYS = 14
+LOOKAHEAD_SECONDS = LOOKAHEAD_DAYS * 86400
+
 ICONS = {'current': 'media-record-symbolic', 'soon': 'alarm-symbolic', 'upcoming': 'x-office-calendar-symbolic'}
 
 
@@ -76,7 +79,7 @@ def normalize_events(items):
 
 
 def visible_events(events, now):
-    return [event for event in events if event.end > now]
+    return [event for event in events if event.end > now and event.start < now + LOOKAHEAD_SECONDS]
 
 
 def meeting_status(event, now, minutes):
@@ -89,12 +92,24 @@ def due_reminders(events, now, minutes, seen):
     return [event for event in events if 0 < event.start - now <= minutes * 60 and event.id not in seen]
 
 
+def format_duration(seconds):
+    """Show the two largest adjacent units, rounding positive durations up to a minute."""
+    minutes = max(0, math.ceil(seconds / 60))
+    for size, suffix, next_size, next_suffix in [(10080, 'w', 1440, 'd'),
+            (1440, 'd', 60, 'h'), (60, 'h', 1, 'm')]:
+        if minutes >= size:
+            whole, remainder = divmod(minutes, size)
+            smaller = remainder // next_size
+            return f'{whole}{suffix}' + (f' {smaller}{next_suffix}' if smaller else '')
+    return f'{minutes}m'
+
+
 def panel_state(events, now, minutes, error='', running=True):
     events = visible_events(events, now)
     if events:
         event = events[0]
         status = meeting_status(event, now, minutes)
-        suffix = 'now' if status == 'current' else f'in {math.ceil((event.start - now) / 60)}m'
+        suffix = 'now' if status == 'current' else f'in {format_duration(event.start - now)}'
         title = event.title if len(event.title) <= 32 else event.title[:31] + '…'
         return {'label': f'{title} · {suffix}', 'icon': ICONS[status], 'visible': running}
     return {'label': 'Calendar · attention' if error else 'No upcoming meetings',
