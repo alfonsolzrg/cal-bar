@@ -78,10 +78,10 @@ installed = json.loads((root / 'installed.json').read_text())
 assert installed['pid'] != after['pid'] and installed['bridgeConnected'], 'Installer did not restart/reconnect the app'
 state = json.loads((root / 'cal-bar/ui-test.json').read_text())
 assert not state.get('error'), state
-assert all(state.get(key) for key in ('agenda', 'preferences', 'reminder')), state
+assert all(state.get(key) for key in ('agenda', 'preferences', 'reminder', 'reminderPersistsAfterStart')), state
 seen = json.loads((root / 'cal-bar/reminders.json').read_text())
 assert state['dedupId'] in seen, 'Reminder deduplication was lost on restart'
-print('PASS: event submenus, reply buttons, multiple calendars, two fullscreen monitors, bridge reconnection, app restart, and installer update without a Shell restart')
+print('PASS: event submenus, reply buttons, multiple calendars, two fullscreen monitors, reminder persistence after meeting start, bridge reconnection, app restart, and installer update without a Shell restart')
 PY
 "$CAL_BAR_BIN_DIR/cal-bar" quit
 sleep 1

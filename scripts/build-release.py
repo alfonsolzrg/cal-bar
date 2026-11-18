@@ -14,6 +14,7 @@ FILES = [
     'stylesheet.css', 'cal_bar.py', 'cal_bar_ctl.py', 'app_logic.py', 'companion_runtime.py',
     'companion_ui.py', 'companion.css', 'gnome_calendar.py', 'google_calendar.py',
     'schemas/org.gnome.shell.extensions.cal-bar.gschema.xml',
+    'docs/screenshots/meeting-info.png', 'docs/screenshots/reminder.png',
 ]
 
 

@@ -2,6 +2,18 @@
 
 Meeting information in your top-bar with full-screen ping and direct joining options.
 
+## Screenshots
+
+Meeting info in the top bar, with links and invitation replies:
+
+![Cal Bar showing the next meeting in the GNOME top bar and expanded meeting actions](docs/screenshots/meeting-info.png)
+
+The full-screen reminder:
+
+![Cal Bar full-screen reminder with Dismiss and Join meeting buttons](docs/screenshots/reminder.png)
+
+These screenshots use sample meetings.
+
 ## Install or update
 
 Supports **GNOME Shell 46**, tested on **Ubuntu 24.04**. Download the latest release installer:
@@ -38,7 +50,7 @@ cal-bar status             # Inspect the app version and bridge status
 ```
 ## Connect and select calendars
 
-1. Open Cal Bar settings and click **Connect**. Right now we use GENOME online accounts to fetch your calendar info.
+1. Open Cal Bar settings and click **Connect**. Right now we use GNOME online accounts to fetch your calendar info.
 2. Choose a supported calendar provider, sign in, and enable **Calendars** for the account.
 3. Return to Cal Bar settings. Calendars appear automatically; **Refresh** checks immediately.
 4. Keep **Use all connected calendars** enabled to combine calendars across accounts, including newly added ones. To choose specific calendars, turn it off and check the calendars you want.
@@ -54,9 +66,16 @@ Expand an event to reveal:
 
 ## Reminders
 
-Reminders appear **5 minutes before** by default, configurable from 1–60 minutes. Set 0 or switch reminders off to disable them. A GTK reminder fills the active monitor and dims the other monitors. Escape, **Dismiss**, or **Join meeting** closes it. Use **Preview reminder** in the app menu before relying on it.
+Reminders appear **5 minutes before** by default, configurable from 1–60 minutes. Set 0 or switch reminders off to disable them. A GTK reminder fills the active monitor and dims the other monitors. It stays on screen when the meeting starts, so you can still join from it. Escape, **Dismiss**, or **Join meeting** closes it. Use **Preview reminder** in the app menu before relying on it.
 
 Cal Bar never automatically opens reminders while locked and catches up after suspend if the meeting hasn't started. Simultaneous reminders appear sequentially as you dismiss them.
+
+## TODO
+
+- [ ] Add direct Google and Microsoft sign-in after registering Cal Bar with the providers.
+- [ ] Test and support newer GNOME Shell versions.
+- [ ] Check invitation replies with real Google and Microsoft calendars, including recurring meetings, and test Meet, Zoom, and Teams links.
+- [ ] Ship a `.deb` package so Ubuntu can handle dependencies and uninstalling.
 
 # Dev info
 
@@ -86,6 +105,8 @@ The companion can open as a normal app without the bridge. The bridge is require
 
 
 ## Architecture and development
+
+To refresh the screenshots with sample meetings in a private GNOME session, run `./scripts/capture-docs.sh`.
 
 - `extension.js`: stable bridge for panel text/icon, button activation, lock/monitor context, and native window focus/placement. It contains no calendar polling, meeting-list UI, RSVP logic, settings UI, or reminder UI.
 - `cal_bar.py`: application lifecycle, D-Bus control, scheduling, account polling, and user actions.

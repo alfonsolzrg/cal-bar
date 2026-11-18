@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from unittest.mock import patch
 import gi
 
 gi.require_version('Gtk', '4.0')
@@ -115,6 +116,16 @@ class Fixture(CalBarApplication):
                 assert all(w.is_fullscreen() for w in self.reminders), 'Reminder windows are not fullscreen'
                 self.results['reminderSizes'] = sorted([[w.get_width(), w.get_height()] for w in self.reminders])
                 assert self.results['reminderSizes'] == [[1024, 768], [1280, 800]], self.results['reminderSizes']
+                # Cross the actual clock boundary without waiting five minutes.
+                reminder = self.reminder_event
+                original_windows = list(self.reminders)
+                with patch('cal_bar.time.time', return_value=reminder.start + 61):
+                    self.tick()
+                assert self.reminders == original_windows, 'Meeting start dismissed the reminder'
+                assert self.reminder_heading.get_text() == 'YOUR MEETING HAS STARTED'
+                assert self.reminder_countdown.get_text().endswith('Started 1 minute ago')
+                self.last_sync = time.time()
+                self.results['reminderPersistsAfterStart'] = True
                 self.results['reminder'] = True
                 self._tested.add('reminder')
                 self.seen.mark(self.events[0])

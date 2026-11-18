@@ -280,7 +280,8 @@ def reminder_windows(app, event, active_geometry=None):
         if main:
             content = spaced_box(spacing=28, margin=64, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, vexpand=True)
             content.append(Gtk.Image(icon_name='alarm-symbolic', pixel_size=72))
-            content.append(Gtk.Label(label='YOUR MEETING IS COMING UP', css_classes=['reminder-eyebrow']))
+            app.reminder_heading = Gtk.Label(label='YOUR MEETING IS COMING UP', css_classes=['reminder-eyebrow'])
+            content.append(app.reminder_heading)
             content.append(Gtk.Label(label=event.title, wrap=True, justify=Gtk.Justification.CENTER,
                                      max_width_chars=38, css_classes=['reminder-title']))
             app.reminder_countdown = Gtk.Label(css_classes=['reminder-time'])

@@ -39,6 +39,7 @@ class CalBarApplication(Adw.Application):
         self.reminder_event = None
         self.reminders = []
         self.reminder_countdown = None
+        self.reminder_heading = None
         self.sync_job = None
         self.response_job = None
         self.response_busy = False
@@ -194,11 +195,21 @@ class CalBarApplication(Adw.Application):
         if self.reminder_event:
             event = self.reminder_event
             # Preview reminders are not part of the calendar snapshot.
-            if event.start <= now or (event.uid != 'preview' and not any(e.id == event.id for e in self.events)):
+            if event.uid != 'preview' and not any(e.id == event.id for e in self.events):
                 self.dismiss_reminder()
             elif self.reminder_countdown:
-                minutes = max(1, math.ceil((event.start - now) / 60))
-                self.reminder_countdown.set_text(f'Starts {time_label(event.start)} · in {minutes} minutes')
+                if event.start > now:
+                    minutes = math.ceil((event.start - now) / 60)
+                    timing = f'Starts in {minutes} {"minute" if minutes == 1 else "minutes"}'
+                    heading = 'YOUR MEETING IS COMING UP'
+                else:
+                    minutes = int((now - event.start) // 60)
+                    timing = 'Started just now' if minutes == 0 else \
+                        f'Started {minutes} {"minute" if minutes == 1 else "minutes"} ago'
+                    heading = 'YOUR MEETING HAS STARTED'
+                self.reminder_countdown.set_text(f'{time_label(event.start)} · {timing}')
+                if self.reminder_heading:
+                    self.reminder_heading.set_text(heading)
         if not self.locked and not self.reminders and self.settings.get_boolean('reminders-enabled'):
             due = due_reminders(self.events, now, self.settings.get_int('reminder-minutes'), self.seen.entries)
             if due:
@@ -260,6 +271,7 @@ class CalBarApplication(Adw.Application):
         windows, self.reminders = self.reminders, []
         self.reminder_event = None
         self.reminder_countdown = None
+        self.reminder_heading = None
         for window in windows:
             window.destroy()
 
