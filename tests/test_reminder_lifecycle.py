@@ -11,7 +11,7 @@ class ReminderLifecycleTests(unittest.TestCase):
         settings.get_boolean.return_value = False
         return SimpleNamespace(stopping=False, reminder_event=event, events=[event],
             reminders=[Mock()], reminder_countdown=Mock(), reminder_heading=Mock(),
-            settings=settings, locked=False, last_sync=1000, seen=SimpleNamespace(entries={}),
+            sound=Mock(), settings=settings, locked=False, last_sync=1000, seen=SimpleNamespace(entries={}),
             dismiss_reminder=Mock(), publish=Mock(), sync=Mock())
 
     def test_reminder_stays_open_across_the_meeting_start(self):
@@ -63,6 +63,7 @@ class ReminderLifecycleTests(unittest.TestCase):
         CalBarApplication.dismiss_reminder(app)
         for window in windows:
             window.destroy.assert_called_once()
+        app.sound.stop.assert_called_once()
         self.assertEqual(app.reminders, [])
         self.assertIsNone(app.reminder_event)
         self.assertIsNone(app.reminder_countdown)

@@ -1,5 +1,6 @@
 """Settings, durable reminder deduplication, and isolated calendar subprocesses."""
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -20,6 +21,59 @@ def load_settings():
     source = Gio.SettingsSchemaSource.new_from_directory(str(ROOT / 'schemas'),
         Gio.SettingsSchemaSource.get_default(), False)
     return Gio.Settings.new_full(source.lookup('org.gnome.shell.extensions.cal-bar', False), None, None)
+
+
+class ReminderSound:
+    """Play one desktop-theme alarm through GNOME's libcanberra player."""
+    def __init__(self, desktop_settings=None):
+        self.process = None
+        self.desktop = desktop_settings
+        if self.desktop is None:
+            schema = Gio.SettingsSchemaSource.get_default().lookup('org.gnome.desktop.sound', True)
+            if schema:
+                self.desktop = Gio.Settings.new_full(schema, None, None)
+
+    def play(self):
+        self.stop()
+        if self.desktop and not self.desktop.get_boolean('event-sounds'):
+            return
+        executable = GLib.find_program_in_path('canberra-gtk-play')
+        if not executable:
+            logging.warning('Reminder sound unavailable: install gnome-session-canberra and sound-theme-freedesktop.')
+            return
+        args = [executable, '--id=alarm-clock-elapsed', '--description=Cal Bar meeting reminder',
+                '--property=media.role=event', f'--property=application.id={BUS_NAME}',
+                '--property=application.name=Cal Bar', '--loop=1']
+        if self.desktop:
+            theme = self.desktop.get_string('theme-name')
+            if theme:
+                args.append(f'--property=canberra.xdg-theme.name={theme}')
+        try:
+            launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE)
+            if GLib.getenv('WAYLAND_DISPLAY'):
+                launcher.setenv('GDK_BACKEND', 'wayland', True)
+            process = launcher.spawnv(args)
+            self.process = process
+            process.wait_async(None, self._finished)
+        except GLib.Error as error:
+            self.process = None
+            logging.warning('Could not play reminder sound: %s', error.message)
+
+    def _finished(self, process, result):
+        try:
+            process.wait_finish(result)
+            if self.process is process and not process.get_successful():
+                logging.warning('Reminder sound could not be played. Check the desktop audio settings.')
+        except GLib.Error as error:
+            logging.warning('Reminder sound failed: %s', error.message)
+        finally:
+            if self.process is process:
+                self.process = None
+
+    def stop(self):
+        process, self.process = self.process, None
+        if process:
+            process.force_exit()
 
 
 class SeenStore:

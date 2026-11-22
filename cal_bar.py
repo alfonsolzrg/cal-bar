@@ -13,7 +13,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from app_logic import Event, due_reminders, normalize_events, panel_state, safe_url
-from companion_runtime import APP_VERSION, BUS_NAME, INTERFACE, OBJECT_PATH, ROOT, SeenStore, load_settings, run_helper
+from companion_runtime import APP_VERSION, BUS_NAME, INTERFACE, OBJECT_PATH, ROOT, ReminderSound, SeenStore, load_settings, run_helper
 from companion_ui import AgendaWindow, PreferencesWindow, TITLES, reminder_windows, time_label
 
 CONTROL_XML = f'''<node><interface name="{INTERFACE}">
@@ -50,6 +50,7 @@ class CalBarApplication(Adw.Application):
         self.focused_role = None
         self.stopping = False
         self.seen = SeenStore()
+        self.sound = ReminderSound()
         self._state_json = ''
         self._bus_registration = 0
         self._lock_proxy = None
@@ -164,6 +165,9 @@ class CalBarApplication(Adw.Application):
             self.events = []
             self.dismiss_reminder()
             self.sync()
+        elif key == 'reminder-sound-enabled':
+            if not self.settings.get_boolean(key):
+                self.sound.stop()
         elif key in ('reminders-enabled', 'reminder-minutes'):
             self.dismiss_reminder()
             self.tick()
@@ -266,8 +270,11 @@ class CalBarApplication(Adw.Application):
                 logging.warning('Could not persist reminder deduplication; retained in memory.')
         self.tick()
         self.request_presentation('reminder')
+        if self.settings.get_boolean('reminder-sound-enabled'):
+            self.sound.play()
 
     def dismiss_reminder(self):
+        self.sound.stop()
         windows, self.reminders = self.reminders, []
         self.reminder_event = None
         self.reminder_countdown = None

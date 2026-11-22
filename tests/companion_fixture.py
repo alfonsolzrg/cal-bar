@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import sys
 import time
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import gi
 
 gi.require_version('Gtk', '4.0')
@@ -44,6 +44,7 @@ companion_ui.run_helper = fake_calendars
 class Fixture(CalBarApplication):
     def __init__(self):
         super().__init__()
+        self.sound = Mock()  # Exercise sound dispatch without touching host audio.
         try:
             self.results = json.loads(ARTIFACT.read_text())
         except (OSError, ValueError):
@@ -117,10 +118,12 @@ class Fixture(CalBarApplication):
                 self.results['reminderSizes'] = sorted([[w.get_width(), w.get_height()] for w in self.reminders])
                 assert self.results['reminderSizes'] == [[1024, 768], [1280, 800]], self.results['reminderSizes']
                 # Cross the actual clock boundary without waiting five minutes.
+                self.sound.play.assert_called_once()
                 reminder = self.reminder_event
                 original_windows = list(self.reminders)
                 with patch('cal_bar.time.time', return_value=reminder.start + 61):
                     self.tick()
+                self.sound.play.assert_called_once()
                 assert self.reminders == original_windows, 'Meeting start dismissed the reminder'
                 assert self.reminder_heading.get_text() == 'YOUR MEETING HAS STARTED'
                 assert self.reminder_countdown.get_text().endswith('Started 1 minute ago')

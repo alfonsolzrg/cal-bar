@@ -66,7 +66,7 @@ Expand an event to reveal:
 
 ## Reminders
 
-Reminders appear **5 minutes before** by default, configurable from 1–60 minutes. Set 0 or switch reminders off to disable them. A GTK reminder fills the active monitor and dims the other monitors. It stays on screen when the meeting starts, so you can still join from it. Escape, **Dismiss**, or **Join meeting** closes it. Use **Preview reminder** in the app menu before relying on it.
+Reminders appear **5 minutes before** by default, configurable from 1–60 minutes. Set 0 or switch reminders off to disable them. A GTK reminder fills the active monitor and dims the other monitors. It stays on screen when the meeting starts, so you can still join from it. Escape, **Dismiss**, or **Join meeting** closes it. The reminder plays your desktop’s alarm sound once, following GNOME’s sound theme and volume settings. Turn **Reminder sound** off in settings for a silent overlay. **Preview reminder** also plays the sound.
 
 Cal Bar never automatically opens reminders while locked and catches up after suspend if the meeting hasn't started. Simultaneous reminders appear sequentially as you dismiss them.
 
@@ -84,7 +84,7 @@ The launcher is in `~/.local/bin`; use `~/.local/bin/cal-bar` if needed. **Resta
 To install from a checkout instead:
 
 ```sh
-sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-ecal-2.0 gir1.2-edataserver-1.2 gir1.2-goa-1.0 libglib2.0-bin gnome-calendar gnome-control-center evolution-data-server gnome-online-accounts
+sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-ecal-2.0 gir1.2-edataserver-1.2 gir1.2-goa-1.0 libglib2.0-bin gnome-calendar gnome-control-center evolution-data-server gnome-online-accounts gnome-session-canberra sound-theme-freedesktop libcanberra-pulse
 ./install.sh
 ```
 

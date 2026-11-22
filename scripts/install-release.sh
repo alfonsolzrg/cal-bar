@@ -31,7 +31,7 @@ main() {
         command -v apt-get >/dev/null || { printf 'Automatic dependencies require apt. See the README for manual setup.\n' >&2; return 1; }
         sudo apt-get update
         sudo apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-ecal-2.0 \
-            gir1.2-edataserver-1.2 gir1.2-goa-1.0 libglib2.0-bin gnome-calendar gnome-control-center evolution-data-server gnome-online-accounts
+            gir1.2-edataserver-1.2 gir1.2-goa-1.0 libglib2.0-bin gnome-calendar gnome-control-center evolution-data-server gnome-online-accounts gnome-session-canberra sound-theme-freedesktop libcanberra-pulse
     fi
     local shell_version
     shell_version="$(LC_ALL=C gnome-shell --version 2>/dev/null || true)"

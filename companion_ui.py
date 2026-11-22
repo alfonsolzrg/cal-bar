@@ -177,6 +177,10 @@ class PreferencesWindow(Adw.PreferencesWindow):
         enabled = Adw.SwitchRow(title='Full-screen reminders')
         self.settings.bind('reminders-enabled', enabled, 'active', 0)
         reminders.add(enabled)
+        sound = Adw.SwitchRow(title='Reminder sound',
+            subtitle='Play the desktop alarm once. Respects GNOME sound settings and mute.')
+        self.settings.bind('reminder-sound-enabled', sound, 'active', 0)
+        reminders.add(sound)
         minutes = Adw.SpinRow(title='Minutes before the meeting', subtitle='0 disables advance reminders',
             adjustment=Gtk.Adjustment(lower=0, upper=60, step_increment=1, page_increment=5))
         self.settings.bind('reminder-minutes', minutes, 'value', 0)

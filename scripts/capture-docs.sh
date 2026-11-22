@@ -31,6 +31,7 @@ gsettings set org.gnome.desktop.background picture-uri-dark ''
 gsettings set org.gnome.desktop.background primary-color '#182233'
 gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
 gsettings --schemadir "$XDG_DATA_HOME/cal-bar/schemas" set org.gnome.shell.extensions.cal-bar reminders-enabled false
+gsettings --schemadir "$XDG_DATA_HOME/cal-bar/schemas" set org.gnome.shell.extensions.cal-bar reminder-sound-enabled false
 /usr/bin/python3 -c "from gi.repository import Gio, GLib; Gio.bus_own_name(Gio.BusType.SESSION, 'org.freedesktop.secrets', Gio.BusNameOwnerFlags.NONE, None, None, None); GLib.MainLoop().run()" &
 secrets_pid=$!
 gnome-shell --wayland --headless --virtual-monitor 1280x800 --wayland-display "$WAYLAND_DISPLAY" \
