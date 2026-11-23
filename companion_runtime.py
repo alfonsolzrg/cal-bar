@@ -28,14 +28,17 @@ class ReminderSound:
     """Play a selected melody through GNOME's libcanberra player."""
     def __init__(self, desktop_settings=None):
         self.process = None
+        self.repeat = False
+        self.melody = None
         self.desktop = desktop_settings
         if self.desktop is None:
             schema = Gio.SettingsSchemaSource.get_default().lookup('org.gnome.desktop.sound', True)
             if schema:
                 self.desktop = Gio.Settings.new_full(schema, None, None)
 
-    def play(self, melody=None):
+    def play(self, melody=None, repeat=False):
         self.stop()
+        self.repeat, self.melody = repeat, melody
         if self.desktop and not self.desktop.get_boolean('event-sounds'):
             return
         executable = GLib.find_program_in_path('canberra-gtk-play')
@@ -69,8 +72,13 @@ class ReminderSound:
     def _finished(self, process, result):
         try:
             process.wait_finish(result)
-            if self.process is process and not process.get_successful():
-                logging.warning('Reminder sound could not be played. Check the desktop audio settings.')
+            if self.process is process:
+                if process.get_successful() and self.repeat:
+                    melody = self.melody
+                    self.process = None
+                    self.play(melody, repeat=True)
+                elif not process.get_successful():
+                    logging.warning('Reminder sound could not be played. Check the desktop audio settings.')
         except GLib.Error as error:
             logging.warning('Reminder sound failed: %s', error.message)
         finally:
@@ -78,6 +86,7 @@ class ReminderSound:
                 self.process = None
 
     def stop(self):
+        self.repeat = False
         process, self.process = self.process, None
         if process:
             process.force_exit()

@@ -51,27 +51,34 @@ def render_melody(key, cache_dir):
     """Render bounded, gently fading mono PCM, with each tune's rhythm."""
     melody = next((item for item in MELODIES if item[0] == key), MELODIES[0])
     key, _, notes, voice = melody
-    destination = Path(cache_dir) / 'melodies-v1' / (key + '.wav')
+    destination = Path(cache_dir) / 'melodies-v2' / (key + '.wav')
     if destination.is_file():
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     beat, phrase = SONG_PHRASES.get(key, (0.75, tuple((note, 1) for note in notes)))
+    # Three complete phrases give each melody a longer musical arc.
+    phrase = phrase * 3
     rate, tail = 22050, 2.0
     samples = [0.0] * int(rate * (sum(length for _, length in phrase) * beat + tail))
     position = 0.0
+    tones = {}
     for pitch, length in phrase:
         start = int(position * rate)
         position += length * beat
         if not pitch:
             continue
-        frequency = 440 * 2 ** ((pitch - 69) / 12)
-        for n in range(int(rate * 1.8)):
-            t = n / rate
-            envelope = min(t / 0.018, 1) * math.exp(-t * (4 if voice == 'wood' else 2.6))
-            phase = 2 * math.pi * frequency * t
+        if pitch not in tones:
+            frequency = 440 * 2 ** ((pitch - 69) / 12)
             overtone = {'wood': 3.0, 'bell': 2.76, 'piano': 2.0, 'soft': 2.0}[voice]
-            value = math.sin(phase) + 0.22 * math.sin(phase * overtone)
-            samples[start + n] += 0.22 * envelope * value
+            tone = []
+            for n in range(int(rate * 1.8)):
+                t = n / rate
+                envelope = min(t / 0.018, 1) * math.exp(-t * (4 if voice == 'wood' else 2.6))
+                phase = 2 * math.pi * frequency * t
+                tone.append(0.22 * envelope * (math.sin(phase) + 0.22 * math.sin(phase * overtone)))
+            tones[pitch] = tone
+        for n, value in enumerate(tones[pitch]):
+            samples[start + n] += value
     pcm = b''.join(struct.pack('<h', int(max(-0.9, min(0.9, value)) * 32767)) for value in samples)
     temporary = destination.with_suffix('.tmp')
     with wave.open(str(temporary), 'wb') as output:

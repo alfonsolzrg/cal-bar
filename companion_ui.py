@@ -179,7 +179,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.settings.bind('reminders-enabled', enabled, 'active', 0)
         reminders.add(enabled)
         sound = Adw.SwitchRow(title='Reminder sound',
-            subtitle='Play a melody once. Respects GNOME sound settings and mute.')
+            subtitle='Repeat the melody until the reminder closes. Respects GNOME sound settings and mute.')
         self.settings.bind('reminder-sound-enabled', sound, 'active', 0)
         reminders.add(sound)
         keys = [item[0] for item in MELODIES]
@@ -189,7 +189,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         melody.connect('notify::selected', lambda row, *_:
             self.settings.set_string('reminder-melody', keys[row.get_selected()]))
         reminders.add(melody)
-        listen = Adw.ActionRow(title='Preview melody', subtitle='About 14–15 seconds. Stops when you close settings.')
+        listen = Adw.ActionRow(title='Preview melody', subtitle='About 38–42 seconds. Stops when you close settings.')
         listen.add_suffix(button('Play', lambda: app.sound.play(self.settings.get_string('reminder-melody')), valign=Gtk.Align.CENTER))
         listen.add_suffix(button('Stop', app.sound.stop, valign=Gtk.Align.CENTER))
         reminders.add(listen)

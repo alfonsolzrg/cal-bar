@@ -86,7 +86,7 @@ class ReminderSoundDispatchTests(unittest.TestCase):
         app = self.app()
         with patch('cal_bar.reminder_windows', return_value=[Mock(), Mock()]):
             CalBarApplication.show_reminder(app, self.event)
-        app.sound.play.assert_called_once()
+        app.sound.play.assert_called_once_with(app.settings.get_string.return_value, repeat=True)
         app.seen.mark.assert_called_once_with(self.event)
         self.assertEqual(len(app.reminders), 2)
 
@@ -94,7 +94,7 @@ class ReminderSoundDispatchTests(unittest.TestCase):
         app = self.app()
         with patch('cal_bar.reminder_windows', return_value=[Mock()]):
             CalBarApplication.show_reminder(app, self.event, preview=True)
-        app.sound.play.assert_called_once()
+        app.sound.play.assert_called_once_with(app.settings.get_string.return_value, repeat=True)
         app.seen.mark.assert_not_called()
 
     def test_sound_switch_leaves_the_visual_reminder_working(self):
@@ -123,3 +123,23 @@ class ReminderSoundDispatchTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class LoopTests(unittest.TestCase):
+    def test_successful_clip_repeats_but_stopped_or_failed_clip_does_not(self):
+        sound = ReminderSound(Mock())
+        process = Mock()
+        sound.process, sound.repeat, sound.melody = process, True, 'helwa'
+        process.get_successful.return_value = True
+        with patch.object(sound, 'play') as play:
+            sound._finished(process, Mock())
+            play.assert_called_once_with('helwa', repeat=True)
+        sound.process, sound.repeat = process, True
+        sound.stop()
+        with patch.object(sound, 'play') as play:
+            sound._finished(process, Mock())
+            play.assert_not_called()
+        sound.process, sound.repeat = process, True
+        process.get_successful.return_value = False
+        with patch.object(sound, 'play') as play, self.assertLogs(level='WARNING'):
+            sound._finished(process, Mock())
+            play.assert_not_called()

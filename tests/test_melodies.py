@@ -15,7 +15,7 @@ class MelodyTests(unittest.TestCase):
                     self.assertEqual(audio.getnchannels(), 1)
                     self.assertEqual(audio.getsampwidth(), 2)
                     beat, phrase = SONG_PHRASES.get(key, (0.75, [(0, 1)] * 16))
-                    expected = sum(length for _, length in phrase) * beat + 2
+                    expected = sum(length for _, length in phrase) * beat * 3 + 2
                     self.assertAlmostEqual(audio.getnframes() / audio.getframerate(), expected, places=4)
                     contents.add(audio.readframes(audio.getnframes()))
                 self.assertEqual(render_melody(key, directory), path)

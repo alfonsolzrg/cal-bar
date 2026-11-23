@@ -129,3 +129,24 @@ class RuntimeTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class AccountLinkTests(unittest.TestCase):
+    def test_links_follow_source_account_not_organizer(self):
+        from urllib.parse import urlsplit, parse_qs
+        event, = normalize_events([raw('one', sourceAccountEmail='work+calendar@example.com',
+            organizer={'email': 'someoneelse@example.com'},
+            meetingUrl='https://meet.google.com/abc-defg-hij?authuser=0&hs=123',
+            htmlLink='https://calendar.google.com/calendar/u/0/event?eid=abc#details')])
+        for link in (event.meeting_url, event.event_url):
+            self.assertEqual(parse_qs(urlsplit(link).query)['authuser'], ['work+calendar@example.com'])
+        self.assertEqual(urlsplit(event.event_url).fragment, 'details')
+        self.assertEqual(urlsplit(event.event_url).path, '/calendar/event')
+        self.assertEqual(parse_qs(urlsplit(event.meeting_url).query)['hs'], ['123'])
+
+    def test_other_providers_and_missing_accounts_are_unchanged(self):
+        from app_logic import account_url
+        for link in ('https://zoom.us/j/123?pwd=abc', 'https://teams.microsoft.com/l/meetup-join/abc',
+                     'https://meet.google.com.evil.example/abc', 'https://www.google.com/search?q=test'):
+            self.assertEqual(account_url(link, 'me@example.com'), link)
+        link = 'https://meet.google.com/abc'
+        self.assertEqual(account_url(link, ''), link)

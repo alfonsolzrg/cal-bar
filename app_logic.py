@@ -2,7 +2,8 @@
 from dataclasses import dataclass
 from datetime import datetime
 import math
-from urllib.parse import urlsplit
+import re
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 LOOKAHEAD_DAYS = 14
 LOOKAHEAD_SECONDS = LOOKAHEAD_DAYS * 86400
@@ -18,6 +19,24 @@ def safe_url(value):
         return url.scheme.lower() == 'https' and bool(url.hostname) and not url.username and not url.password
     except ValueError:
         return False
+
+
+
+def account_url(value, email):
+    """Select the originating calendar account on Google meeting/event links."""
+    if not safe_url(value) or not isinstance(email, str) or '@' not in email:
+        return value
+    url = urlsplit(value)
+    host = url.hostname.lower()
+    if host not in ('meet.google.com', 'calendar.google.com', 'www.google.com'):
+        return value
+    if host == 'www.google.com' and not url.path.startswith('/calendar/'):
+        return value
+    query = [(key, val) for key, val in parse_qsl(url.query, keep_blank_values=True) if key != 'authuser']
+    query.append(('authuser', email))
+    # Browser-specific numeric account paths must not override the email hint.
+    path = re.sub(r'/calendar/u/\d+/', '/calendar/', url.path) if host != 'meet.google.com' else url.path
+    return urlunsplit((url.scheme, url.netloc, path, urlencode(query), url.fragment))
 
 
 def timestamp(value):
@@ -71,7 +90,8 @@ def normalize_events(items):
         events.append(Event(
             id=f"{item['id']}:{start_text}", title=item.get('summary') or 'Untitled meeting', start=start, end=end,
             calendar_name=item.get('calendarName', ''), calendar_id=item.get('calendarId', ''),
-            meeting_url=call, event_url=item.get('htmlLink', ''), native_id=item.get('nativeEventId', ''),
+            meeting_url=account_url(call, item.get('sourceAccountEmail', '')),
+            event_url=account_url(item.get('htmlLink', ''), item.get('sourceAccountEmail', '')), native_id=item.get('nativeEventId', ''),
             uid=item.get('eventUid', ''), recurrence_id=item.get('recurrenceId', ''),
             can_respond=item.get('canRespond') is True, response_reason=item.get('responseReason') or 'Respond using the calendar event',
             response_status=item.get('responseStatus', '')))

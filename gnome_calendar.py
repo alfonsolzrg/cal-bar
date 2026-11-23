@@ -134,6 +134,7 @@ def instance_to_event(component, start, end, calendar, own_emails, ical, default
         'summary': component.get_summary() or 'Untitled meeting',
         'start': {'dateTime': timestamp(start)}, 'end': {'dateTime': timestamp(end)},
         'meetingUrl': join_url, 'htmlLink': event_url,
+        'sourceAccountEmail': calendar.get('account', ''),
         'eventUid': component.get_uid(), 'recurrenceId': rid,
         'nativeEventId': f"{calendar['id']}:{component.get_uid()}" + (f':{rid}' if rid else ''),
         'canRespond': can_respond, 'responseReason': reason, 'responseStatus': response,
