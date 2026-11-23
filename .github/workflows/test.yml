@@ -18,8 +18,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install GNOME test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 \
+          # Regional EC2 mirrors occasionally stall on large GNOME dependencies.
+          sudo sed -i -E 's|http://[^ /]*ec2.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 \
             gir1.2-ecal-2.0 gir1.2-edataserver-1.2 gir1.2-goa-1.0 \
             libglib2.0-bin gnome-shell gnome-calendar gnome-control-center \
             evolution-data-server gnome-online-accounts gnome-session-canberra sound-theme-freedesktop libcanberra-pulse dbus-daemon libgl1-mesa-dri
