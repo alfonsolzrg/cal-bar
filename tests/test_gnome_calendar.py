@@ -128,6 +128,14 @@ class ICalendarTests(unittest.TestCase):
         gnome.set_response(comp, {'me@example.com'}, 'declined', ICAL)
         self.assertIn('PARTSTAT=DECLINED', comp.as_ical_string())
 
+    def test_attendees(self):
+        comp = ICAL.Component.new_from_string(self.invitation().as_ical_string().replace(
+            'PARTSTAT=TENTATIVE:', 'PARTSTAT=TENTATIVE;CN=Guest Person:'))
+        google = {'id': 'work', 'name': 'Work'}
+        event = gnome.instance_to_event(comp, comp.get_dtstart(), comp.get_dtend(), google, {'me@example.com'}, ICAL)
+        self.assertEqual([(a['email'], a['displayName'], a['responseStatus']) for a in event['attendees']],
+                         [('me@example.com', '', 'needsaction'), ('guest@example.com', 'Guest Person', 'tentative')])
+
     def test_cannot_respond_for_other_accounts_or_organizer(self):
         with self.assertRaisesRegex(RuntimeError, 'Not an invitation'):
             gnome.set_response(self.invitation(), {'other@example.com'}, 'accepted', ICAL)

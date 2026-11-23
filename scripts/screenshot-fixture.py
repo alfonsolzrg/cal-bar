@@ -5,9 +5,6 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import gi
-gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk
 from app_logic import Event
 from cal_bar import CalBarApplication
 
@@ -31,9 +28,8 @@ class ScreenshotFixture(CalBarApplication):
 
     def show_agenda(self):
         super().show_agenda()
-        row = self.agenda.list.get_first_child()
-        if isinstance(row, Gtk.Expander):
-            row.set_expanded(True)
+        if self.agenda.rows:
+            self.agenda.rows[0].set_expanded(True)
 
     def preview(self):
         self.show_reminder(self.events[0], preview=True)

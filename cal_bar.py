@@ -307,8 +307,7 @@ class CalBarApplication(Adw.Application):
         self.response_job = run_helper(self.settings, 'respond', finished, event.response_payload(response))
 
     def notify(self, message):
-        notification = Gio.Notification.new('Cal Bar')
-        notification.set_body(message)
+        notification = Gio.Notification.new(message)  # the app name already says Cal Bar
         self.send_notification('cal-bar-status', notification)
 
     def open_url(self, url):

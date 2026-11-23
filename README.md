@@ -58,11 +58,12 @@ cal-bar status             # Inspect the app version and bridge status
 ## Meeting list and invitation actions
 
 The top bar shows the current meeting, or the next meeting within two weeks. Countdowns use compact labels like `45m`, `2h 15m`, `1d 3h`, and `1w 2d`.
-Expand an event to reveal:
+Meetings are grouped by day. Expand one to reveal:
 
-- **Join meeting**, detecting Google Meet, Zoom, or Teams conference links.
-- A secondary **Open calendar event** web link. Without a web event URL, **Open event in GNOME Calendar** opens the specific event there instead.
-- **Accept / Reject** buttons and your current response. Recurring replies affect **this occurrence only**.
+- **Join Meeting**, detecting Google Meet, Zoom, or Teams conference links. Collapsed meetings show a **Join** button too.
+- **Open Event**, the calendar's web link. Without a web event URL, **Open in Calendar** opens the specific event there instead.
+- For invitations, **Accept / Reject** buttons and your current response. Recurring replies affect **this occurrence only**.
+- The **guest list** with each guest's response.
 
 ## Reminders
 

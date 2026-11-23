@@ -17,9 +17,11 @@ def load_libraries():
     try:
         import gi
         for name, version in [('Goa', '1.0'), ('EDataServer', '1.2'),
-                              ('ECal', '2.0'), ('ICalGLib', '3.0')]:
+                              ('ECal', '2.0')]:
             gi.require_version(name, version)
-        from gi.repository import Goa, EDataServer, ECal, ICalGLib
+        from gi.repository import Goa, EDataServer, ECal
+        # ECal already loaded the ICalGLib it links against (3.0 on Ubuntu 24.04, 4.0 with libical 4).
+        from gi.repository import ICalGLib
         return Goa, EDataServer, ECal, ICalGLib
     except (ImportError, ValueError) as error:
         raise RuntimeError(DEPENDENCIES) from error
@@ -102,9 +104,14 @@ def invitation_state(component, own_emails, ical):
         return False, 'Not an invitation for this account', ''
     if (organizer.get_organizer() or '').lower().removeprefix('mailto:') in own_emails:
         return False, 'You organize this event', ''
-    partstat = attendee.get_first_parameter(ical.ParameterKind.PARTSTAT_PARAMETER)
-    status = partstat.get_partstat().value_nick if partstat else 'needsaction'
-    return True, '', status
+    return True, '', partstat_name(attendee, ical)
+
+
+def partstat_name(prop, ical):
+    param = prop.get_first_parameter(ical.ParameterKind.PARTSTAT_PARAMETER)
+    value = param.get_partstat() if param else None
+    # libical 3 enums carry value_nick; libical 4 (PyGObject 3.52+) enums are Python enums.
+    return (getattr(value, 'value_nick', None) or value.name.lower()) if value is not None else 'needsaction'
 
 
 def instance_to_event(component, start, end, calendar, own_emails, ical, default_timezone=None):
@@ -113,12 +120,19 @@ def instance_to_event(component, start, end, calendar, own_emails, ical, default
     status = component.get_first_property(ical.PropertyKind.STATUS_PROPERTY)
     if status and status.get_status() == ical.PropertyStatus.CANCELLED:
         return None
+    organizer = component.get_first_property(ical.PropertyKind.ORGANIZER_PROPERTY)
+    organizer = (organizer.get_organizer() or '').lower().removeprefix('mailto:') if organizer else ''
+    attendees = []
     prop = component.get_first_property(ical.PropertyKind.ATTENDEE_PROPERTY)
     while prop:
         email = (prop.get_attendee() or '').lower().removeprefix('mailto:')
-        partstat = prop.get_first_parameter(ical.ParameterKind.PARTSTAT_PARAMETER)
-        if email in own_emails and partstat and partstat.get_partstat() == ical.ParameterPartstat.DECLINED:
+        status = partstat_name(prop, ical)
+        if email in own_emails and status == 'declined':
             return None
+        cn = prop.get_first_parameter(ical.ParameterKind.CN_PARAMETER)
+        # Same shape as Google's REST attendees, so both sources normalize alike.
+        attendees.append({'email': email, 'displayName': cn.get_cn() if cn else '', 'responseStatus': status,
+                          'organizer': email == organizer, 'self': email in own_emails})
         prop = component.get_next_property(ical.PropertyKind.ATTENDEE_PROPERTY)
     join_url, event_url = event_links(component, ical)
     can_respond, reason, response = invitation_state(component, own_emails, ical)
@@ -137,7 +151,7 @@ def instance_to_event(component, start, end, calendar, own_emails, ical, default
         'eventUid': component.get_uid(), 'recurrenceId': rid,
         'nativeEventId': f"{calendar['id']}:{component.get_uid()}" + (f':{rid}' if rid else ''),
         'canRespond': can_respond, 'responseReason': reason, 'responseStatus': response,
-        'calendarName': calendar['name'], 'calendarId': calendar['id'],
+        'calendarName': calendar['name'], 'calendarId': calendar['id'], 'attendees': attendees,
     }
 
 

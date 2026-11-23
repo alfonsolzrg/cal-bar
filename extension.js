@@ -53,6 +53,11 @@ export default class CalBarBridge extends Extension {
             });
             const resized = window.connect('size-changed', () => this._arrange(window));
             const shown = window.connect('shown', () => {
+                // Place before the first paint so mutter's centered placement never shows.
+                if (window.get_title() === TITLES.agenda) {
+                    this._readyWindows.add(window);
+                    this._arrange(window);
+                }
                 const source = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
                     this._windowTimers.delete(source);
                     if (this._windowSignals.has(window)) {

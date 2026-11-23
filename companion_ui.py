@@ -5,7 +5,7 @@ import gi
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Adw, Gdk, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
 from app_logic import LOOKAHEAD_DAYS, ICONS, meeting_status, safe_url, visible_events
 from companion_runtime import run_helper
 from reminder_melodies import MELODIES
@@ -43,40 +43,43 @@ def time_label(value):
     return datetime.fromtimestamp(value).strftime('%a %d %b · %H:%M')
 
 
-class AgendaWindow(Gtk.ApplicationWindow):
+def day_title(value, now):
+    days = (datetime.fromtimestamp(value).date() - datetime.fromtimestamp(now).date()).days
+    return {0: 'Today', 1: 'Tomorrow'}.get(days) or datetime.fromtimestamp(value).strftime('%A %d %B')
+
+
+class AgendaWindow(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title=TITLES['agenda'], decorated=False,
-                         default_width=560, default_height=640)
+        super().__init__(application=app, title=TITLES['agenda'], resizable=False,
+                         default_width=440, default_height=600)
         self.app = app
         self.had_focus = False
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.set_child(box)
-        header = Gtk.HeaderBar()
-        header.set_title_widget(Gtk.Label(label='Upcoming meetings', css_classes=['heading']))
-        header.set_show_title_buttons(False)
-        header.pack_start(button('Settings', app.show_preferences))
-        menu = Gtk.MenuButton(icon_name='open-menu-symbolic')
-        popover = Gtk.Popover()
-        actions = spaced_box(spacing=6, margin=8)
-        for label, callback in [('Refresh calendars', app.sync), ('Preview reminder', app.preview),
-                                ('Restart Cal Bar', app.restart), ('Quit Cal Bar', app.quit_app)]:
-            def activate(callback=callback):
-                popover.popdown()
-                callback()
-            actions.append(button(label, activate))
-        popover.set_child(actions)
-        menu.set_popover(popover)
-        header.pack_end(menu)
-        box.append(header)
-        self.message = Gtk.Label(wrap=True, xalign=0, max_width_chars=64, css_classes=['dim-label'])
-        self.message.set_margin_start(20)
-        self.message.set_margin_end(20)
-        self.message.set_margin_top(12)
-        box.append(self.message)
-        self.scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
-        self.list = spaced_box(spacing=10, margin=16)
-        self.scroll.set_child(self.list)
-        box.append(self.scroll)
+        self.groups = []
+        self.rows = []
+        actions = Gio.SimpleActionGroup()
+        for name, callback in [('preferences', app.show_preferences), ('refresh', app.sync), ('preview', app.preview),
+                               ('restart', app.restart), ('quit', app.quit_app)]:
+            action = Gio.SimpleAction(name=name)
+            action.connect('activate', lambda *_, callback=callback: callback())
+            actions.add_action(action)
+        self.insert_action_group('agenda', actions)
+        menu = Gio.Menu()
+        for section in [[('Refresh Calendars', 'refresh'), ('Preview Reminder', 'preview')],
+                        [('Preferences', 'preferences')],
+                        [('Restart Cal Bar', 'restart'), ('Quit Cal Bar', 'quit')]]:
+            items = Gio.Menu()
+            for label, name in section:
+                items.append(label, f'agenda.{name}')
+            menu.append_section(None, items)
+        header = Adw.HeaderBar(show_start_title_buttons=False, show_end_title_buttons=False)
+        header.set_title_widget(Adw.WindowTitle(title='Upcoming Meetings', subtitle=f'Next {LOOKAHEAD_DAYS} days'))
+        header.pack_end(Gtk.MenuButton(icon_name='open-menu-symbolic', menu_model=menu, tooltip_text='Main Menu'))
+        self.banner = Adw.Banner()
+        self.page = Adw.PreferencesPage()
+        view = Adw.ToolbarView(content=self.page)
+        view.add_top_bar(header)
+        view.add_top_bar(self.banner)
+        self.set_content(view)
         self.connect('close-request', lambda *_: (self.set_visible(False), True)[1])
         self.connect('notify::is-active', self._active_changed)
         escape_closes(self, lambda: self.set_visible(False))
@@ -93,56 +96,100 @@ class AgendaWindow(Gtk.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def render(self):
-        expanded = set()
-        child = self.list.get_first_child()
-        while child:
-            if isinstance(child, Gtk.Expander) and child.get_expanded():
-                expanded.add(child.event_id)
-            next_child = child.get_next_sibling()
-            self.list.remove(child)
-            child = next_child
-        self.message.set_text(self.app.error or f'Next {LOOKAHEAD_DAYS} days · expand an event for links and invitation replies')
-        events = visible_events(self.app.events, time.time())
+        expanded = {row.event_id for row in self.rows if row.get_expanded()}
+        for group in self.groups:
+            self.page.remove(group)
+        self.groups, self.rows = [], []
+        self.banner.set_title(self.app.error or '')
+        self.banner.set_revealed(bool(self.app.error))
+        now = time.time()
+        events = visible_events(self.app.events, now)
         if not events:
-            self.list.append(Gtk.Label(label='No timed meetings scheduled', margin_top=32, margin_bottom=32))
+            group = Adw.PreferencesGroup()
+            group.add(Adw.StatusPage(icon_name='x-office-calendar-symbolic', title='No Upcoming Meetings',
+                                     description=f'Nothing scheduled in the next {LOOKAHEAD_DAYS} days',
+                                     css_classes=['compact']))
+            self.page.add(group)
+            self.groups.append(group)
+        group = None
         for event in events:
-            row = Gtk.Expander(expanded=event.id in expanded)
+            title = day_title(event.start, now)
+            if not group or group.get_title() != title:
+                group = Adw.PreferencesGroup(title=title)
+                self.page.add(group)
+                self.groups.append(group)
+            subtitle = f'{datetime.fromtimestamp(event.start):%H:%M} – {datetime.fromtimestamp(event.end):%H:%M}'
+            row = Adw.ExpanderRow(title=event.title, subtitle=' · '.join(filter(None, [subtitle, event.calendar_name])),
+                                  use_markup=False, expanded=event.id in expanded)
             row.event_id = event.id
-            row.add_css_class('card')
-            summary = Gtk.Box(spacing=12)
-            status = meeting_status(event, time.time(), self.app.settings.get_int('reminder-minutes'))
-            summary.append(Gtk.Image(icon_name=ICONS[status]))
-            text = spaced_box(spacing=4, margin=8, hexpand=True)
-            text.append(Gtk.Label(label=event.title, wrap=True, xalign=0, max_width_chars=48, css_classes=['heading']))
-            text.append(Gtk.Label(label=f'{time_label(event.start)} – {datetime.fromtimestamp(event.end):%H:%M}',
-                                  xalign=0, css_classes=['dim-label']))
-            if event.calendar_name:
-                text.append(Gtk.Label(label=event.calendar_name, xalign=0, css_classes=['dim-label']))
-            summary.append(text)
-            row.set_label_widget(summary)
-            options = spaced_box(spacing=10, margin=16)
-            join = button('Join meeting', lambda e=event: self.app.open_url(e.meeting_url))
+            status = meeting_status(event, now, self.app.settings.get_int('reminder-minutes'))
+            row.add_prefix(Gtk.Image(icon_name=ICONS[status], css_classes=['accent'] if status != 'upcoming' else []))
+            if safe_url(event.meeting_url):
+                quick_join = button('Join', lambda e=event: self.app.open_url(e.meeting_url), valign=Gtk.Align.CENTER,
+                                    tooltip_text='Join Meeting', css_classes=['suggested-action'])
+                # The expanded row already shows Join Meeting.
+                row.bind_property('expanded', quick_join, 'visible', GObject.BindingFlags.SYNC_CREATE |
+                                  GObject.BindingFlags.INVERT_BOOLEAN)
+                row.add_suffix(quick_join)
+            links = Gtk.Box(spacing=8, homogeneous=True, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+            join = button('Join Meeting', lambda e=event: self.app.open_url(e.meeting_url),
+                          css_classes=['suggested-action'])
             join.set_sensitive(safe_url(event.meeting_url))
-            options.append(join)
-            details = button('Open calendar event' if safe_url(event.event_url) else 'Open event in GNOME Calendar',
+            row.join_button = join
+            links.append(join)
+            details = button('Open Event' if safe_url(event.event_url) else 'Open in Calendar',
                              lambda e=event: self.app.open_event(e))
             details.set_sensitive(safe_url(event.event_url) or bool(event.native_id))
-            options.append(details)
-            if event.response_status:
-                status = {'needsaction': 'Not answered', 'accepted': 'Accepted', 'tentative': 'Tentative',
-                          'declined': 'Declined'}.get(event.response_status, event.response_status)
-                options.append(Gtk.Label(label=f'Your response: {status}', xalign=0))
-            replies = Gtk.Box(spacing=10, homogeneous=True)
-            for label, response in [('Accept', 'accepted'), ('Reject', 'declined')]:
-                action = button(label, lambda e=event, r=response: self.app.respond(e, r), hexpand=True)
-                action.set_sensitive(event.can_respond and not self.app.response_busy and event.response_status != response)
+            links.append(details)
+            row.add_row(links)
+            row.reply_buttons = []
+            if event.can_respond or event.response_status:
+                row.add_row(self.reply_row(event, row))
+            if event.attendees:
+                row.add_row(guests_box(event.attendees))
+            group.add(row)
+            self.rows.append(row)
+
+    def reply_row(self, event, row):
+        response = {'needsaction': 'Not answered', 'accepted': 'Accepted', 'tentative': 'Tentative',
+                    'declined': 'Declined'}.get(event.response_status, event.response_status)
+        note = ('Reply for this occurrence only' if event.recurrence_id else 'Sends your response to the organizer') \
+            if event.can_respond else event.response_reason
+        reply = Adw.ActionRow(title=f'Your response: {response}' if response else 'Invitation',
+                              subtitle=note or '', use_markup=False)
+        if event.can_respond:
+            replies = Gtk.Box(css_classes=['linked'], valign=Gtk.Align.CENTER)
+            for label, value in [('Accept', 'accepted'), ('Reject', 'declined')]:
+                action = button(label, lambda e=event, r=value: self.app.respond(e, r))
+                action.set_sensitive(not self.app.response_busy and event.response_status != value)
                 replies.append(action)
-            options.append(replies)
-            note = ('Reply for this occurrence only' if event.recurrence_id else 'Sends your response to the organizer') \
-                if event.can_respond else event.response_reason
-            options.append(Gtk.Label(label=note, wrap=True, xalign=0, max_width_chars=50, css_classes=['dim-label']))
-            row.set_child(options)
-            self.list.append(row)
+                row.reply_buttons.append(action)
+            reply.add_suffix(replies)
+        return reply
+
+
+GUEST_STATUS = {'accepted': ('Going', 'success'), 'declined': ('Declined', 'error'), 'tentative': ('Maybe', 'warning')}
+
+
+def guests_box(attendees):
+    going = sum(status == 'accepted' for _, _, status, _ in attendees)
+    box = spaced_box(spacing=10, margin=12)
+    box.append(Gtk.Label(label=f'Guests · {going} of {len(attendees)} going', xalign=0,
+                         css_classes=['caption-heading', 'dim-label']))
+    for name, email, status, organizer in attendees:
+        line = Gtk.Box(spacing=10)
+        line.append(Adw.Avatar(size=28, text=name, show_initials=True))
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER, hexpand=True)
+        text.append(Gtk.Label(label=name, xalign=0, ellipsize=Pango.EllipsizeMode.END))
+        details = ' · '.join(filter(None, [email if email != name else '', 'Organizer' if organizer else '']))
+        if details:
+            text.append(Gtk.Label(label=details, xalign=0, ellipsize=Pango.EllipsizeMode.END,
+                                  css_classes=['caption', 'dim-label']))
+        line.append(text)
+        label, style = GUEST_STATUS.get(status, ('Awaiting', 'dim-label'))
+        line.append(Gtk.Label(label=label, valign=Gtk.Align.CENTER, css_classes=['caption', style]))
+        box.append(line)
+    return box
 
 
 class PreferencesWindow(Adw.PreferencesWindow):

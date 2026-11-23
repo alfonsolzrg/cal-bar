@@ -3,7 +3,8 @@
   "name": "Cal Bar",
   "description": "Top-bar bridge for the restartable Cal Bar calendar companion",
   "shell-version": [
-    "46"
+    "46",
+    "51"
   ],
   "settings-schema": "org.gnome.shell.extensions.cal-bar",
   "version": 4,

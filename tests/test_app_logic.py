@@ -31,6 +31,11 @@ class SchedulingTests(unittest.TestCase):
         self.assertEqual(events[0].start, NOW + 300)
         self.assertNotEqual(events[0].id, events[1].id)
 
+    def test_attendees(self):
+        event, = normalize_events([raw('a', attendees=[{'email': 'x@example.com', 'displayName': 'X',
+                                                         'responseStatus': 'needsAction', 'organizer': True}])])
+        self.assertEqual(event.attendees, (('X', 'x@example.com', 'needsaction', True),))
+
     def test_current_event_priority_expiration_and_panel_status(self):
         events = [Event('old', 'Old', NOW - 200, NOW), Event('live', 'Live', NOW - 100, NOW + 100),
                   Event('next', 'Next', NOW + 300, NOW + 600)]

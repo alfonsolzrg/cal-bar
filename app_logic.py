@@ -43,6 +43,7 @@ class Event:
     can_respond: bool = False
     response_reason: str = 'Respond using the calendar event'
     response_status: str = ''
+    attendees: tuple = ()  # (name, email, response status, is organizer)
 
     def response_payload(self, response):
         if response not in ('accepted', 'declined'):
@@ -74,7 +75,10 @@ def normalize_events(items):
             meeting_url=call, event_url=item.get('htmlLink', ''), native_id=item.get('nativeEventId', ''),
             uid=item.get('eventUid', ''), recurrence_id=item.get('recurrenceId', ''),
             can_respond=item.get('canRespond') is True, response_reason=item.get('responseReason') or 'Respond using the calendar event',
-            response_status=item.get('responseStatus', '')))
+            response_status=item.get('responseStatus', ''),
+            attendees=tuple((a.get('displayName') or a.get('email', ''), a.get('email', ''),
+                             str(a.get('responseStatus', '')).lower(), a.get('organizer') is True)
+                            for a in item.get('attendees', []) if isinstance(a, dict))))
     return sorted(events, key=lambda e: e.start)
 
 

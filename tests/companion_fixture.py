@@ -80,24 +80,11 @@ class Fixture(CalBarApplication):
                 self.results['lastReminderState'] = [dict(title=w.get_title(), active=w.is_active(),
                     fullscreen=w.is_fullscreen(), width=w.get_width(), height=w.get_height()) for w in self.reminders]
             if self.agenda and self.agenda.get_visible() and 'agenda' not in self._tested:
-                rows = []
-                row = self.agenda.list.get_first_child()
-                while row:
-                    if isinstance(row, Gtk.Expander):
-                        rows.append(row)
-                    row = row.get_next_sibling()
+                rows = self.agenda.rows
                 assert len(rows) == 2, 'Missing event submenus'
                 rows[0].set_expanded(True)
-                box = rows[0].get_child()
-                child = box.get_first_child()
-                while child:
-                    if isinstance(child, Gtk.Box):
-                        action = child.get_first_child()
-                        while action:
-                            if isinstance(action, Gtk.Button) and action.get_label() in ('Accept', 'Reject'):
-                                action.emit('clicked')
-                            action = action.get_next_sibling()
-                    child = child.get_next_sibling()
+                for action in rows[0].reply_buttons:
+                    action.emit('clicked')
                 assert {p['response'] for p in self.results['buttonReplies']} == {'accepted', 'declined'}
                 self.results['agenda'] = True
                 self._tested.add('agenda')

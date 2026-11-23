@@ -34,8 +34,10 @@ gsettings --schemadir "$XDG_DATA_HOME/cal-bar/schemas" set org.gnome.shell.exten
 gsettings --schemadir "$XDG_DATA_HOME/cal-bar/schemas" set org.gnome.shell.extensions.cal-bar reminder-sound-enabled false
 /usr/bin/python3 -c "from gi.repository import Gio, GLib; Gio.bus_own_name(Gio.BusType.SESSION, 'org.freedesktop.secrets', Gio.BusNameOwnerFlags.NONE, None, None, None); GLib.MainLoop().run()" &
 secrets_pid=$!
+sm_flag=()  # --sm-disable was removed after GNOME 46
+gnome-shell --help 2>&1 | grep -q -- --sm-disable && sm_flag=(--sm-disable)
 gnome-shell --wayland --headless --virtual-monitor 1280x800 --wayland-display "$WAYLAND_DISPLAY" \
-    --no-x11 --sm-disable --mode=user > "$XDG_STATE_HOME/shell.log" 2>&1 &
+    --no-x11 "${sm_flag[@]}" --mode=user > "$XDG_STATE_HOME/shell.log" 2>&1 &
 shell_pid=$!
 trap '"$CAL_BAR_BIN_DIR/cal-bar" stop >/dev/null 2>&1 || true; kill "$shell_pid" "$secrets_pid" 2>/dev/null || true' EXIT
 for _ in {1..60}; do
