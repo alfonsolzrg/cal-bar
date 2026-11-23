@@ -16,7 +16,7 @@ These screenshots use sample meetings.
 
 ## Install or update
 
-Supports **GNOME Shell 46**, tested on **Ubuntu 24.04**. Download the latest release installer:
+Supports **GNOME Shell 46**, tested on **Ubuntu 24.04**. For Arch/CachyOS with GNOME 51, and the patched GNOME Calendar, see [docs/install-arch.md](docs/install-arch.md). Download the latest release installer:
 
 ```sh
 curl -fSLO https://github.com/romaad/cal-bar/releases/latest/download/install-cal-bar.sh

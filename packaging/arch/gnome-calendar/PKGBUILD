@@ -1,0 +1,77 @@
+# Maintainer: Fabian Bornschein <fabiscafe@archlinux.org>
+# Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
+# Contributor: Jan de Groot <jgc@archlinux.org>
+
+pkgname=gnome-calendar
+pkgver=51.0
+# Cal Bar build: guests and Google Meet in the event editor. A high pkgrel keeps
+# repo rebuilds of 51.0 from replacing it; add gnome-calendar to IgnorePkg to also skip 51.x.
+pkgrel=106
+pkgdesc="Simple and beautiful calendar application designed to perfectly fit the GNOME desktop"
+url="https://apps.gnome.org/Calendar"
+arch=(x86_64)
+license=(GPL-3.0-or-later)
+depends=(
+  dconf
+  evolution-data-server
+  fribidi
+  geoclue
+  glib2
+  glibc
+  graphene
+  gsettings-desktop-schemas
+  gtk4
+  json-glib
+  hicolor-icon-theme
+  libadwaita
+  libedataserverui4
+  libgcc
+  libgweather-4
+  libical
+  libsoup3
+  pango
+)
+makedepends=(
+  blueprint-compiler
+  git
+  glib2-devel
+  meson
+)
+optdepends=(
+  'gnome-control-center: Manage online accounts'
+  'xdg-desktop-portal-impl: Various user settings (e.g. 24-hour clock)'
+)
+groups=(gnome)
+source=(
+  "git+https://gitlab.gnome.org/GNOME/gnome-calendar.git#tag=${pkgver/[a-z]/.&}"
+  0001-Support-libical-4.0.0.patch
+  0002-calbar-guests-and-meet.patch
+)
+b2sums=('f7aae64783502777e1ee8e796981dc7446e81c3ee14e7b1ae9eba0b4d830d434bfae4b1425faca883fd48362f21b4cb3addf8e3fa86806900c3289c0cab3aed0'
+        '475f289d527efaf68a6a5df4e5205ad85fe355f38b85a4e9abb4bd8fe16d15aaae6f3ec217f3e6e99d7c0bd6bd7c37c62a39998907422e843b9686c9fb9c86b0'
+        'dc3fad61249e6487768c6ba8533576c679d9f7c0613eaa70546662404e6b82c4d79e877fbaf11804a94a0afad3615d5d80bcf781cfa34522cd9486a5cf3f9b62')
+
+prepare() {
+  cd $pkgname
+
+  # Fix build with libical 4.0
+  # https://gitlab.gnome.org/GNOME/gnome-calendar/-/merge_requests/763
+  git apply -3 ../0001-Support-libical-4.0.0.patch
+
+  git apply -3 ../0002-calbar-guests-and-meet.patch
+}
+
+build() {
+  arch-meson $pkgname build
+  meson compile -C build
+}
+
+check() {
+  meson test -C build --print-errorlogs ||:
+}
+
+package() {
+  meson install -C build --no-rebuild --destdir "$pkgdir"
+}
+
+# vim:set sw=2 sts=-1 et:

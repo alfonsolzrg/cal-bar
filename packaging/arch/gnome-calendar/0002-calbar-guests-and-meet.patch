@@ -1,0 +1,1699 @@
+diff --git a/meson.build b/meson.build
+index 3aea6af..a0026ed 100644
+--- a/meson.build
++++ b/meson.build
+@@ -163,7 +163,9 @@ gsettings_desktop_schemas_dep = dependency('gsettings-desktop-schemas', version:
+ libedataserverui_dep = dependency('libedataserverui4-1.0', version: '>= 3.45.1')
+ libedataserver_dep = dependency('libedataserver-1.2', version: '>= 3.45.1')
+ libecal_dep = dependency('libecal-2.0', version: '>= 3.45.1')
++libebook_dep = dependency('libebook-1.2', version: '>= 3.45.1')
+ libsoup_dep = dependency('libsoup-3.0')
++json_glib_dep = dependency('json-glib-1.0')
+ libadwaita_dep = dependency('libadwaita-1', version: '>= 1.8.alpha')
+ fribidi_dep = dependency('fribidi')
+ glib_dep = dependency('glib-2.0', version: '>= 2.80.0')
+diff --git a/src/core/gcal-event.c b/src/core/gcal-event.c
+index a5e872a..8919500 100644
+--- a/src/core/gcal-event.c
++++ b/src/core/gcal-event.c
+@@ -2016,3 +2016,170 @@ gcal_event_get_organizer (GcalEvent *self)
+ 
+   return self->organizer;
+ }
++
++static gchar *
++attendee_uris (GcalEvent *self)
++{
++  GSList *attendees = e_cal_component_get_attendees (self->component);
++  GString *uris = g_string_new (NULL);
++
++  for (GSList *l = attendees; l != NULL; l = l->next)
++    g_string_append_printf (uris, "%s\n", e_cal_component_attendee_get_value (l->data));
++
++  g_slist_free_full (attendees, e_cal_component_attendee_free);
++  return g_string_free (uris, FALSE);
++}
++
++static void
++reload_attendees (GcalEvent *self)
++{
++  ECalComponentOrganizer *organizer = e_cal_component_get_organizer (self->component);
++
++  g_clear_object (&self->organizer);
++  if (organizer)
++    self->organizer = gcal_event_organizer_new (organizer);
++  e_cal_component_organizer_free (organizer);
++
++  g_list_store_remove_all (self->attendees);
++  load_attendees (self);
++}
++
++/**
++ * gcal_event_add_attendee:
++ * @self: a #GcalEvent
++ * @email: the guest's email address
++ * @name: (nullable): the guest's display name
++ * @organizer_email: (nullable): the calendar owner's address, used when @self has no organizer yet
++ *
++ * Invites @email. The calendar server sends the invitation when the event is saved.
++ *
++ * Returns: %FALSE if @email is already a participant
++ */
++gboolean
++gcal_event_add_attendee (GcalEvent   *self,
++                         const gchar *email,
++                         const gchar *name,
++                         const gchar *organizer_email)
++{
++  g_autofree gchar *value = g_strconcat ("mailto:", email, NULL);
++  ECalComponentOrganizer *organizer;
++  GSList *attendees;
++
++  g_return_val_if_fail (GCAL_IS_EVENT (self), FALSE);
++
++  attendees = e_cal_component_get_attendees (self->component);
++  for (GSList *l = attendees; l != NULL; l = l->next)
++    {
++      if (g_ascii_strcasecmp (e_cal_component_attendee_get_value (l->data), value) == 0)
++        {
++          g_slist_free_full (attendees, e_cal_component_attendee_free);
++          return FALSE;
++        }
++    }
++
++  organizer = e_cal_component_get_organizer (self->component);
++  if (!organizer && organizer_email)
++    {
++      g_autofree gchar *organizer_value = g_strconcat ("mailto:", organizer_email, NULL);
++
++      organizer = e_cal_component_organizer_new_full (organizer_value, NULL, NULL, NULL);
++      e_cal_component_set_organizer (self->component, organizer);
++      /* Servers list the organizer as an accepted participant, as Google Calendar does. */
++      attendees = g_slist_append (attendees,
++                                  e_cal_component_attendee_new_full (organizer_value, NULL, I_CAL_CUTYPE_INDIVIDUAL,
++                                                                     I_CAL_ROLE_CHAIR, I_CAL_PARTSTAT_ACCEPTED, FALSE,
++                                                                     NULL, NULL, NULL, NULL, NULL));
++    }
++  e_cal_component_organizer_free (organizer);
++
++  attendees = g_slist_append (attendees,
++                              e_cal_component_attendee_new_full (value, NULL, I_CAL_CUTYPE_INDIVIDUAL,
++                                                                 I_CAL_ROLE_REQPARTICIPANT, I_CAL_PARTSTAT_NEEDSACTION, TRUE,
++                                                                 NULL, NULL, NULL, name && *name ? name : NULL, NULL));
++  e_cal_component_set_attendees (self->component, attendees);
++  g_slist_free_full (attendees, e_cal_component_attendee_free);
++
++  reload_attendees (self);
++  return TRUE;
++}
++
++/**
++ * gcal_event_remove_attendee:
++ * @self: a #GcalEvent
++ * @uri: the participant's calendar address, e.g. "mailto:guest@example.com"
++ *
++ * Removes a participant. Removing the last guest also removes the organizer,
++ * turning @self back into a plain event.
++ */
++void
++gcal_event_remove_attendee (GcalEvent   *self,
++                            const gchar *uri)
++{
++  ECalComponentOrganizer *organizer;
++  GSList *attendees, *kept = NULL;
++  const gchar *organizer_value = NULL;
++
++  g_return_if_fail (GCAL_IS_EVENT (self));
++
++  organizer = e_cal_component_get_organizer (self->component);
++  if (organizer)
++    organizer_value = e_cal_component_organizer_get_value (organizer);
++
++  attendees = e_cal_component_get_attendees (self->component);
++  for (GSList *l = attendees; l != NULL; l = l->next)
++    {
++      if (g_ascii_strcasecmp (e_cal_component_attendee_get_value (l->data), uri) != 0)
++        kept = g_slist_append (kept, e_cal_component_attendee_copy (l->data));
++    }
++
++  if (organizer_value &&
++      (!kept || (!kept->next && g_ascii_strcasecmp (e_cal_component_attendee_get_value (kept->data), organizer_value) == 0)))
++    {
++      g_slist_free_full (g_steal_pointer (&kept), e_cal_component_attendee_free);
++      e_cal_component_set_organizer (self->component, NULL);
++    }
++
++  e_cal_component_set_attendees (self->component, kept);
++  g_slist_free_full (kept, e_cal_component_attendee_free);
++  g_slist_free_full (attendees, e_cal_component_attendee_free);
++  e_cal_component_organizer_free (organizer);
++
++  reload_attendees (self);
++}
++
++/**
++ * gcal_event_attendees_equal:
++ * @event1: a #GcalEvent
++ * @event2: a #GcalEvent
++ *
++ * Returns: %TRUE if both events invite the same participants
++ */
++gboolean
++gcal_event_attendees_equal (GcalEvent *event1,
++                            GcalEvent *event2)
++{
++  g_autofree gchar *uris1 = attendee_uris (event1);
++  g_autofree gchar *uris2 = attendee_uris (event2);
++
++  return g_strcmp0 (uris1, uris2) == 0;
++}
++
++/**
++ * gcal_event_copy_attendees:
++ * @self: the #GcalEvent to change
++ * @source: the #GcalEvent whose organizer and participants are copied
++ */
++void
++gcal_event_copy_attendees (GcalEvent *self,
++                           GcalEvent *source)
++{
++  ECalComponentOrganizer *organizer = e_cal_component_get_organizer (source->component);
++  GSList *attendees = e_cal_component_get_attendees (source->component);
++
++  e_cal_component_set_organizer (self->component, organizer);
++  e_cal_component_set_attendees (self->component, attendees);
++  g_slist_free_full (attendees, e_cal_component_attendee_free);
++  e_cal_component_organizer_free (organizer);
++
++  reload_attendees (self);
++}
+diff --git a/src/core/gcal-event.h b/src/core/gcal-event.h
+index e603098..4228c75 100644
+--- a/src/core/gcal-event.h
++++ b/src/core/gcal-event.h
+@@ -142,6 +142,20 @@ GListModel *         gcal_event_get_attendees                    (GcalEvent
+ 
+ GcalEventOrganizer * gcal_event_get_organizer                    (GcalEvent          *self);
+ 
++gboolean             gcal_event_add_attendee                     (GcalEvent          *self,
++                                                                  const gchar        *email,
++                                                                  const gchar        *name,
++                                                                  const gchar        *organizer_email);
++
++void                 gcal_event_remove_attendee                  (GcalEvent          *self,
++                                                                  const gchar        *uri);
++
++gboolean             gcal_event_attendees_equal                  (GcalEvent          *event1,
++                                                                  GcalEvent          *event2);
++
++void                 gcal_event_copy_attendees                   (GcalEvent          *self,
++                                                                  GcalEvent          *source);
++
+ gboolean             gcal_event_alarms_equal                     (GcalEvent          *event1,
+                                                                   GcalEvent          *event2);
+ 
+diff --git a/src/core/gcal-google-meet.c b/src/core/gcal-google-meet.c
+new file mode 100644
+index 0000000..2255c33
+--- /dev/null
++++ b/src/core/gcal-google-meet.c
+@@ -0,0 +1,309 @@
++/* gcal-google-meet.c
++ *
++ * Adds Google Meet video calls to events in Google calendars, through the
++ * Calendar REST API and the account's existing GNOME Online Accounts sign-in.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#define G_LOG_DOMAIN "GcalGoogleMeet"
++
++#include <glib/gi18n.h>
++#include <json-glib/json-glib.h>
++#include <libsoup/soup.h>
++
++#include "gcal-calendar.h"
++#include "gcal-google-meet.h"
++
++#define GOOGLE_CALDAV_HOST "apidata.googleusercontent.com"
++#define GOOGLE_EVENTS_URL "https://www.googleapis.com/calendar/v3/calendars/%s/events"
++
++typedef struct
++{
++  GcalCalendar *calendar;
++  gchar        *uid;
++} MeetData;
++
++static void
++meet_data_free (gpointer data)
++{
++  MeetData *meet = data;
++
++  g_clear_object (&meet->calendar);
++  g_free (meet->uid);
++  g_free (meet);
++}
++
++/* Google CalDAV calendars live at /caldav/v2/<calendar id>/events/ */
++static gchar *
++google_calendar_id (GcalCalendar *calendar)
++{
++  ESource *source = gcal_calendar_get_source (calendar);
++  g_autoptr (GUri) uri = NULL;
++  g_auto (GStrv) parts = NULL;
++
++  if (!e_source_has_extension (source, E_SOURCE_EXTENSION_WEBDAV_BACKEND))
++    return NULL;
++
++  uri = e_source_webdav_dup_uri (e_source_get_extension (source, E_SOURCE_EXTENSION_WEBDAV_BACKEND));
++  if (!uri || g_strcmp0 (g_uri_get_host (uri), GOOGLE_CALDAV_HOST) != 0)
++    return NULL;
++
++  parts = g_strsplit (g_uri_get_path (uri), "/", -1);
++  if (g_strv_length (parts) < 4 || g_strcmp0 (parts[1], "caldav") != 0 || g_strcmp0 (parts[2], "v2") != 0)
++    return NULL;
++
++  return g_uri_unescape_string (parts[3], NULL);
++}
++
++static JsonNode *
++google_request (SoupSession  *session,
++                const gchar  *method,
++                const gchar  *url,
++                const gchar  *token,
++                const gchar  *body,
++                GError      **error)
++{
++  g_autoptr (SoupMessage) message = soup_message_new (method, url);
++  g_autoptr (JsonParser) parser = json_parser_new ();
++  g_autoptr (GBytes) response = NULL;
++  g_autofree gchar *authorization = g_strdup_printf ("Bearer %s", token);
++  const gchar *data;
++  gsize size;
++
++  if (!message)
++    {
++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid Google Calendar address");
++      return NULL;
++    }
++
++  soup_message_headers_append (soup_message_get_request_headers (message), "Authorization", authorization);
++  if (body)
++    {
++      g_autoptr (GBytes) bytes = g_bytes_new (body, strlen (body));
++      soup_message_set_request_body_from_bytes (message, "application/json", bytes);
++    }
++
++  response = soup_session_send_and_read (session, message, NULL, error);
++  if (!response)
++    return NULL;
++
++  data = g_bytes_get_data (response, &size);
++
++  if (soup_message_get_status (message) != SOUP_STATUS_OK)
++    {
++      const gchar *reason = NULL;
++      JsonNode *root;
++
++      /* Google explains refusals as {"error": {"message": "..."}} */
++      if (json_parser_load_from_data (parser, data, size, NULL) &&
++          (root = json_parser_get_root (parser)) && JSON_NODE_HOLDS_OBJECT (root) &&
++          json_object_has_member (json_node_get_object (root), "error") &&
++          JSON_NODE_HOLDS_OBJECT (json_object_get_member (json_node_get_object (root), "error")))
++        reason = json_object_get_string_member_with_default (
++          json_object_get_object_member (json_node_get_object (root), "error"), "message", NULL);
++
++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Google Calendar refused the request (HTTP %u): %s"),
++                   soup_message_get_status (message), reason ? reason : _("no details"));
++      return NULL;
++    }
++
++  if (!json_parser_load_from_data (parser, data, size, error))
++    return NULL;
++
++  return json_node_copy (json_parser_get_root (parser));
++}
++
++/* Finds the event (the series, for recurring ones) by its iCalendar UID. */
++static gboolean
++find_event (SoupSession  *session,
++            const gchar  *base,
++            const gchar  *escaped_uid,
++            const gchar  *token,
++            gchar       **out_event_id,
++            gboolean     *out_has_link,
++            GError      **error)
++{
++  g_autofree gchar *lookup = g_strdup_printf ("%s?iCalUID=%s", base, escaped_uid);
++  g_autoptr (JsonNode) root = google_request (session, "GET", lookup, token, NULL, error);
++  JsonArray *items;
++
++  *out_has_link = FALSE;
++  if (!root)
++    return FALSE;
++
++  items = JSON_NODE_HOLDS_OBJECT (root) && json_object_has_member (json_node_get_object (root), "items")
++            ? json_object_get_array_member (json_node_get_object (root), "items") : NULL;
++  for (guint i = 0; items && i < json_array_get_length (items); i++)
++    {
++      JsonObject *item = json_array_get_object_element (items, i);
++
++      /* A recurring event gets one link on the series, as Google Calendar does. */
++      if (json_object_has_member (item, "recurringEventId"))
++        continue;
++
++      *out_has_link = json_object_has_member (item, "hangoutLink");
++      g_free (*out_event_id);
++      *out_event_id = g_strdup (json_object_get_string_member_with_default (item, "id", NULL));
++      break;
++    }
++
++  return TRUE;
++}
++
++static void
++add_meet_thread (GTask        *task,
++                 gpointer      source_object,
++                 gpointer      task_data,
++                 GCancellable *cancellable)
++{
++  MeetData *data = task_data;
++  g_autoptr (SoupSession) session = soup_session_new ();
++  g_autoptr (JsonNode) updated = NULL;
++  g_autoptr (GError) error = NULL;
++  g_autofree gchar *calendar_id = google_calendar_id (data->calendar);
++  g_autofree gchar *escaped_calendar = NULL;
++  g_autofree gchar *escaped_uid = g_uri_escape_string (data->uid, NULL, FALSE);
++  g_autofree gchar *event_id = NULL;
++  g_autofree gchar *token = NULL;
++  g_autofree gchar *base = NULL;
++  g_autofree gchar *url = NULL;
++  g_autofree gchar *body = NULL;
++  g_autofree gchar *request_id = g_uuid_string_random ();
++  gboolean has_link = FALSE;
++
++  if (!calendar_id)
++    {
++      g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, _("This is not a Google calendar"));
++      return;
++    }
++
++  if (!e_source_get_oauth2_access_token_sync (gcal_calendar_get_source (data->calendar), cancellable,
++                                              &token, NULL, &error))
++    {
++      g_task_return_error (task, g_steal_pointer (&error));
++      return;
++    }
++
++  escaped_calendar = g_uri_escape_string (calendar_id, NULL, FALSE);
++  base = g_strdup_printf (GOOGLE_EVENTS_URL, escaped_calendar);
++
++  /* A new event may still be uploading to Google, so give it a few seconds to appear. */
++  for (gint attempt = 0; attempt < 10 && !event_id; attempt++)
++    {
++      if (!find_event (session, base, escaped_uid, token, &event_id, &has_link, &error))
++        {
++          g_task_return_error (task, g_steal_pointer (&error));
++          return;
++        }
++
++      if (has_link)
++        {
++          g_task_return_boolean (task, TRUE);
++          return;
++        }
++
++      if (!event_id)
++        g_usleep (2 * G_USEC_PER_SEC);
++    }
++
++  if (!event_id)
++    {
++      g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
++                               _("The event did not appear in Google Calendar"));
++      return;
++    }
++
++  /* Google guests see the link in their calendars; only email the guests outside Google. */
++  url = g_strdup_printf ("%s/%s?conferenceDataVersion=1&sendUpdates=externalOnly", base, event_id);
++  body = g_strdup_printf ("{\"conferenceData\": {\"createRequest\": {\"requestId\": \"%s\", "
++                          "\"conferenceSolutionKey\": {\"type\": \"hangoutsMeet\"}}}}", request_id);
++  updated = google_request (session, "PATCH", url, token, body, &error);
++  if (!updated)
++    {
++      g_autofree gchar *ignored_id = NULL;
++
++      /* Another app (e.g. Cal Bar) may have added a call at the same time; that is a success. */
++      if (!find_event (session, base, escaped_uid, token, &ignored_id, &has_link, NULL) || !has_link)
++        {
++          g_task_return_error (task, g_steal_pointer (&error));
++          return;
++        }
++    }
++
++  /* Pull the link into the local calendar now instead of at the next periodic sync. */
++  e_client_refresh_sync (E_CLIENT (gcal_calendar_get_client (data->calendar)), cancellable, NULL);
++
++  g_task_return_boolean (task, TRUE);
++}
++
++static void
++on_meet_added_cb (GObject      *source_object,
++                  GAsyncResult *result,
++                  gpointer      user_data)
++{
++  g_autoptr (GNotification) notification = NULL;
++  g_autoptr (GError) error = NULL;
++  GApplication *application;
++
++  if (g_task_propagate_boolean (G_TASK (result), &error))
++    return;
++
++  g_warning ("Could not add Google Meet: %s", error->message);
++
++  application = g_application_get_default ();
++  if (!application)
++    return;
++
++  notification = g_notification_new (_("Could not add a Google Meet video call"));
++  g_notification_set_body (notification, error->message);
++  g_application_send_notification (application, "google-meet", notification);
++}
++
++/**
++ * gcal_google_meet_is_supported:
++ * @calendar: a #GcalCalendar
++ *
++ * Returns: %TRUE if @calendar is a Google calendar that can host Meet calls
++ */
++gboolean
++gcal_google_meet_is_supported (GcalCalendar *calendar)
++{
++  g_autofree gchar *calendar_id = NULL;
++
++  if (!calendar)
++    return FALSE;
++
++  calendar_id = google_calendar_id (calendar);
++  return calendar_id != NULL;
++}
++
++/**
++ * gcal_google_meet_add:
++ * @event: a #GcalEvent saved, or being saved, to a Google calendar
++ *
++ * Adds a Google Meet video call to @event in the background. Failures are
++ * reported with a desktop notification.
++ */
++void
++gcal_google_meet_add (GcalEvent *event)
++{
++  g_autoptr (GTask) task = NULL;
++  MeetData *data;
++
++  g_return_if_fail (GCAL_IS_EVENT (event));
++
++  data = g_new0 (MeetData, 1);
++  data->calendar = g_object_ref (gcal_event_get_calendar (event));
++  data->uid = g_strdup (e_cal_component_get_uid (gcal_event_get_component (event)));
++
++  task = g_task_new (NULL, NULL, on_meet_added_cb, NULL);
++  g_task_set_source_tag (task, gcal_google_meet_add);
++  g_task_set_task_data (task, data, meet_data_free);
++  g_task_run_in_thread (task, add_meet_thread);
++}
+diff --git a/src/core/gcal-google-meet.h b/src/core/gcal-google-meet.h
+new file mode 100644
+index 0000000..d5b79ba
+--- /dev/null
++++ b/src/core/gcal-google-meet.h
+@@ -0,0 +1,21 @@
++/* gcal-google-meet.h
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#pragma once
++
++#include "gcal-event.h"
++
++G_BEGIN_DECLS
++
++gboolean             gcal_google_meet_is_supported               (GcalCalendar       *calendar);
++
++void                 gcal_google_meet_add                        (GcalEvent          *event);
++
++G_END_DECLS
+diff --git a/src/core/meson.build b/src/core/meson.build
+index 0d9af7f..e3d0da0 100644
+--- a/src/core/meson.build
++++ b/src/core/meson.build
+@@ -20,4 +20,5 @@ sources += files(
+   'gcal-time-zone-monitor.c',
+   'gcal-event-attendee.c',
+   'gcal-event-organizer.c',
++  'gcal-google-meet.c',
+ )
+diff --git a/src/gui/event-editor/gcal-attendee-details-page.c b/src/gui/event-editor/gcal-attendee-details-page.c
+index 5b266c3..2a7e192 100644
+--- a/src/gui/event-editor/gcal-attendee-details-page.c
++++ b/src/gui/event-editor/gcal-attendee-details-page.c
+@@ -54,6 +54,8 @@ struct _GcalAttendeeDetailsPage
+   GtkWidget                *group_not_responded;
+ 
+   GcalEventAttendeeTypeFilterFlags attendee_type_filter_flags;
++
++  gboolean                  removable;
+ };
+ 
+ enum
+@@ -83,7 +85,11 @@ static GtkWidget *
+ create_attendee_row_widget (void *attendee,
+                             void *user_data)
+ {
+-  return gcal_attendee_row_new (attendee);
++  GcalAttendeeDetailsPage *self = user_data;
++  GtkWidget *row = gcal_attendee_row_new (attendee);
++
++  gcal_attendee_row_set_removable (GCAL_ATTENDEE_ROW (row), self->removable);
++  return row;
+ }
+ 
+ static void
+@@ -275,27 +281,27 @@ gcal_attendee_details_page_init (GcalAttendeeDetailsPage *instance)
+   adw_preferences_group_bind_model (ADW_PREFERENCES_GROUP (instance->group_accepted),
+                                     G_LIST_MODEL (instance->filter_list_accepted),
+                                     create_attendee_row_widget,
+-                                    NULL, NULL);
++                                    instance, NULL);
+ 
+   adw_preferences_group_bind_model (ADW_PREFERENCES_GROUP (instance->group_tentative),
+                                     G_LIST_MODEL (instance->filter_list_tentative),
+                                     create_attendee_row_widget,
+-                                    NULL, NULL);
++                                    instance, NULL);
+ 
+   adw_preferences_group_bind_model (ADW_PREFERENCES_GROUP (instance->group_declined),
+                                     G_LIST_MODEL (instance->filter_list_declined),
+                                     create_attendee_row_widget,
+-                                    NULL, NULL);
++                                    instance, NULL);
+ 
+   adw_preferences_group_bind_model (ADW_PREFERENCES_GROUP (instance->group_delegated),
+                                     G_LIST_MODEL (instance->filter_list_delegated),
+                                     create_attendee_row_widget,
+-                                    NULL, NULL);
++                                    instance, NULL);
+ 
+   adw_preferences_group_bind_model (ADW_PREFERENCES_GROUP (instance->group_not_responded),
+                                     G_LIST_MODEL (instance->filter_list_not_responded),
+                                     create_attendee_row_widget,
+-                                    NULL, NULL);
++                                    instance, NULL);
+ }
+ 
+ static void
+@@ -420,3 +426,19 @@ gcal_attendee_details_page_set_type_filter (GcalAttendeeDetailsPage         *sel
+   g_assert (GCAL_IS_ATTENDEE_DETAILS_PAGE (self));
+   set_type_filter_flags (self, flags);
+ }
++
++/**
++ * gcal_attendee_details_page_set_removable:
++ * @self: a #GcalAttendeeDetailsPage instance.
++ * @removable: whether rows show a button that removes the guest
++ *
++ * Must be called before gcal_attendee_details_page_set_attendees(),
++ * which creates the rows.
++ */
++void
++gcal_attendee_details_page_set_removable (GcalAttendeeDetailsPage *self,
++                                          gboolean                 removable)
++{
++  g_assert (GCAL_IS_ATTENDEE_DETAILS_PAGE (self));
++  self->removable = removable;
++}
+diff --git a/src/gui/event-editor/gcal-attendee-details-page.h b/src/gui/event-editor/gcal-attendee-details-page.h
+index 958ed79..baaf933 100644
+--- a/src/gui/event-editor/gcal-attendee-details-page.h
++++ b/src/gui/event-editor/gcal-attendee-details-page.h
+@@ -34,6 +34,9 @@ void                 gcal_attendee_details_page_set_attendees          (GcalAtte
+ void                 gcal_attendee_details_page_set_type_filter        (GcalAttendeeDetailsPage         *self,
+                                                                         GcalEventAttendeeTypeFilterFlags flags);
+ 
++void                 gcal_attendee_details_page_set_removable          (GcalAttendeeDetailsPage *self,
++                                                                        gboolean                 removable);
++
+ G_END_DECLS
+ 
+ #endif
+diff --git a/src/gui/event-editor/gcal-attendee-row.c b/src/gui/event-editor/gcal-attendee-row.c
+index 8e3dc29..d7e34aa 100644
+--- a/src/gui/event-editor/gcal-attendee-row.c
++++ b/src/gui/event-editor/gcal-attendee-row.c
+@@ -88,14 +88,16 @@ setup_row_title_and_subtitle (GcalAttendeeRow *self)
+   g_autoptr (GString) title = NULL;
+   g_autoptr (GString) subtitle = NULL;
+ 
+-  /* this is the initial line for both cases */
+-  title = g_string_new (gcal_event_attendee_get_name (self->attendee));
+   g_autofree const gchar *delegator_email = gcal_get_email_from_mailto_uri (gcal_event_attendee_get_uri (self->attendee));
++  const gchar *name = gcal_event_attendee_get_name (self->attendee);
++
++  /* this is the initial line for both cases; guests without a name go by their email */
++  title = g_string_new (name && *name ? name : delegator_email);
+ 
+   if (gcal_event_attendee_get_part_status (self->attendee) != GCAL_EVENT_ATTENDEE_PART_DELEGATED)
+     {
+       /* show subtitle only when the name != email */
+-      if (g_strcmp0 (gcal_event_attendee_get_name (self->attendee), delegator_email) != 0)
++      if (name && *name && g_strcmp0 (name, delegator_email) != 0)
+         subtitle = g_string_new (delegator_email ? delegator_email : "");
+     }
+   else
+@@ -274,3 +276,31 @@ gcal_attendee_row_get_attendee (GcalAttendeeRow *self)
+ 
+   return self->attendee;
+ }
++
++/**
++ * gcal_attendee_row_set_removable:
++ * @self: a #GcalAttendeeRow
++ * @removable: whether to show a button that removes the guest
++ *
++ * The button activates the event editor's "remove-attendee" action.
++ */
++void
++gcal_attendee_row_set_removable (GcalAttendeeRow *self,
++                                 gboolean         removable)
++{
++  GtkWidget *button;
++
++  g_return_if_fail (GCAL_IS_ATTENDEE_ROW (self));
++
++  if (!removable)
++    return;
++
++  button = gtk_button_new_from_icon_name ("user-trash-symbolic");
++  gtk_widget_set_valign (button, GTK_ALIGN_CENTER);
++  gtk_widget_set_tooltip_text (button, gettext ("Remove Guest"));
++  gtk_widget_add_css_class (button, "flat");
++  gtk_actionable_set_action_name (GTK_ACTIONABLE (button), "event-editor.remove-attendee");
++  gtk_actionable_set_action_target_value (GTK_ACTIONABLE (button),
++                                          g_variant_new_string (gcal_event_attendee_get_uri (self->attendee)));
++  adw_action_row_add_suffix (ADW_ACTION_ROW (self), button);
++}
+diff --git a/src/gui/event-editor/gcal-attendee-row.h b/src/gui/event-editor/gcal-attendee-row.h
+index 5ebe0cf..12df5a2 100644
+--- a/src/gui/event-editor/gcal-attendee-row.h
++++ b/src/gui/event-editor/gcal-attendee-row.h
+@@ -30,4 +30,7 @@ G_DECLARE_FINAL_TYPE (GcalAttendeeRow, gcal_attendee_row, GCAL, ATTENDEE_ROW, Ad
+ GtkWidget         *gcal_attendee_row_new          (GcalEventAttendee *attendee);
+ GcalEventAttendee *gcal_attendee_row_get_attendee (GcalAttendeeRow   *self);
+ 
++void               gcal_attendee_row_set_removable (GcalAttendeeRow   *self,
++                                                    gboolean           removable);
++
+ G_END_DECLS
+diff --git a/src/gui/event-editor/gcal-attendees-section.blp b/src/gui/event-editor/gcal-attendees-section.blp
+index 8066b28..4f32882 100644
+--- a/src/gui/event-editor/gcal-attendees-section.blp
++++ b/src/gui/event-editor/gcal-attendees-section.blp
+@@ -1,7 +1,9 @@
+ using Gtk 4.0;
++using Adw 1;
+ 
+ template $GcalAttendeesSection: $GcalEventEditorSection {
+   $GcalOrganizerRow organizer_row {
++    visible: false;
+     organizer: bind template.organizer;
+   }
+ 
+@@ -16,4 +18,36 @@ template $GcalAttendeesSection: $GcalEventEditorSection {
+     attendees: bind template.attendees;
+     filter-flags: GCAL_EVENT_ATTENDEE_TYPE_FILTER_RESOURCE;
+   }
++
++  Adw.ActionRow join_row {
++    title: _("Video Call");
++    use-markup: false;
++    visible: false;
++
++    [suffix]
++    Button {
++      label: _("Join");
++      valign: center;
++      clicked => $on_join_button_clicked_cb() swapped;
++
++      styles [
++        "suggested-action",
++      ]
++    }
++  }
++
++  Adw.SwitchRow meet_row {
++    title: _("Google Meet Video Call");
++    subtitle: _("Created when you save");
++    visible: false;
++  }
++
++  Adw.EntryRow add_guest_row {
++    title: _("Add Guest by Email");
++    input-purpose: email;
++    show-apply-button: true;
++    visible: false;
++    apply => $on_add_guest_row_apply_cb() swapped;
++    entry-activated => $on_add_guest_row_apply_cb() swapped;
++  }
+ }
+diff --git a/src/gui/event-editor/gcal-attendees-section.c b/src/gui/event-editor/gcal-attendees-section.c
+index 3b36685..0f34718 100644
+--- a/src/gui/event-editor/gcal-attendees-section.c
++++ b/src/gui/event-editor/gcal-attendees-section.c
+@@ -22,10 +22,14 @@
+ #include <gtk/gtk.h>
+ #include <libintl.h>
+ 
++#include "gcal-attendee-row.h"
+ #include "gcal-attendee-summary-row.h"
+ #include "gcal-event-attendee.h"
+ #include "gcal-event-organizer.h"
+ #include "gcal-event.h"
++#include "gcal-google-meet.h"
++#include <libebook/libebook.h>
++#include "gcal-utils.h"
+ #include "gcal-organizer-row.h"
+ #include "glib-object.h"
+ 
+@@ -36,6 +40,24 @@ struct _GcalAttendeesSection
+   GcalEventOrganizer  *organizer;
+ 
+   AdwActionRow        *summary_row;
++  GtkWidget           *organizer_row;
++  AdwEntryRow         *add_guest_row;
++  AdwSwitchRow        *meet_row;
++  AdwActionRow        *join_row;
++  gchar               *meeting_url;
++
++  gchar               *own_email;
++  gboolean             can_edit_guests;
++
++  /* Guest suggestions from the desktop address books */
++  GPtrArray           *books;
++  GCancellable        *books_cancellable;
++  GCancellable        *query_cancellable;
++  guint                query_serial;
++  GtkWidget           *suggestions_popover;
++  GtkListBox          *suggestions;
++
++  GPtrArray           *guest_rows; /* owned by the group */
+ 
+   GListModel          *attendees;
+ };
+@@ -63,19 +85,59 @@ gcal_attendees_section_event_set_cb (GcalEventEditorSection *section,
+ {
+   GcalAttendeesSection *self = GCAL_ATTENDEES_SECTION (section);
+ 
+-  if (event)
++  self->attendees = event ? gcal_event_get_attendees (event) : NULL;
++  self->can_edit_guests = FALSE; /* until set_calendar() runs for this event */
++  gtk_editable_set_text (GTK_EDITABLE (self->add_guest_row), "");
++  gtk_popover_popdown (GTK_POPOVER (self->suggestions_popover));
++  adw_switch_row_set_active (self->meet_row, FALSE);
++
++  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ATTENDEES]);
++  gcal_attendees_section_refresh (self);
++}
++
++static gboolean
++is_email (const gchar *text)
++{
++  const gchar *at = strchr (text, '@');
++
++  return at && at != text && strchr (at + 1, '.') && !strchr (at + 1, '@') &&
++         !strpbrk (text, " \t\r\n<>,;:\"");
++}
++
++static void
++on_add_guest_row_apply_cb (GcalAttendeesSection *self)
++{
++  GcalEvent *event = gcal_event_editor_section_get_event (GCAL_EVENT_EDITOR_SECTION (self));
++  g_autofree gchar *email = g_strstrip (g_strdup (gtk_editable_get_text (GTK_EDITABLE (self->add_guest_row))));
++  GtkListBoxRow *suggestion = gtk_list_box_get_selected_row (self->suggestions);
++  const gchar *name = NULL;
++  gboolean first_guest;
++
++  if (suggestion && gtk_widget_get_visible (self->suggestions_popover) &&
++      (!is_email (email) || g_ascii_strcasecmp (email, g_object_get_data (G_OBJECT (suggestion), "email")) == 0))
+     {
+-      self->organizer = gcal_event_get_organizer (event);
+-      self->attendees = gcal_event_get_attendees (event);
++      g_free (email);
++      email = g_strdup (g_object_get_data (G_OBJECT (suggestion), "email"));
++      name = g_object_get_data (G_OBJECT (suggestion), "name");
+     }
+-  else
++
++  if (!event || !is_email (email))
+     {
+-      self->organizer = NULL;
+-      self->attendees = NULL;
++      gtk_widget_add_css_class (GTK_WIDGET (self->add_guest_row), "error");
++      return;
+     }
+ 
+-  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ATTENDEES]);
+-  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ORGANIZER]);
++  gtk_widget_remove_css_class (GTK_WIDGET (self->add_guest_row), "error");
++  first_guest = gcal_event_get_organizer (event) == NULL;
++  gcal_event_add_attendee (event, email, name, self->own_email);
++  gtk_editable_set_text (GTK_EDITABLE (self->add_guest_row), "");
++  gtk_popover_popdown (GTK_POPOVER (self->suggestions_popover));
++
++  /* Meetings with guests usually need a call, so offer one by default. */
++  if (first_guest && gtk_widget_get_visible (GTK_WIDGET (self->meet_row)))
++    adw_switch_row_set_active (self->meet_row, TRUE);
++
++  gcal_attendees_section_refresh (self);
+ }
+ 
+ 
+@@ -94,7 +156,8 @@ gcal_attendees_section_get_property (GObject *object,
+   switch (property_id)
+     {
+     case PROP_ATTENDEES:
+-      g_value_set_object (value, self->attendees);
++      /* Editable events list their guests inline instead of in the summary rows. */
++      g_value_set_object (value, self->can_edit_guests ? NULL : self->attendees);
+       break;
+ 
+     case PROP_ORGANIZER:
+@@ -131,14 +194,326 @@ gcal_attendees_section_finalize (GObject *object)
+   GcalAttendeesSection *self = (GcalAttendeesSection *) object;
+ 
+   self->attendees = NULL; /* not owned */
++  g_clear_pointer (&self->own_email, g_free);
++  g_clear_pointer (&self->meeting_url, g_free);
++  g_clear_pointer (&self->books, g_ptr_array_unref);
++  g_clear_pointer (&self->guest_rows, g_ptr_array_unref);
+ 
+   G_OBJECT_CLASS (gcal_attendees_section_parent_class)->finalize (object);
+ }
+ 
++static void
++on_join_button_clicked_cb (GcalAttendeesSection *self)
++{
++  g_autoptr (GtkUriLauncher) launcher = NULL;
++
++  if (!self->meeting_url)
++    return;
++
++  launcher = gtk_uri_launcher_new (self->meeting_url);
++  gtk_uri_launcher_launch (launcher, GTK_WINDOW (gtk_widget_get_root (GTK_WIDGET (self))), NULL, NULL, NULL);
++}
++
++static void
++gcal_attendees_section_dispose (GObject *object)
++{
++  GcalAttendeesSection *self = (GcalAttendeesSection *) object;
++
++  g_cancellable_cancel (self->books_cancellable);
++  g_cancellable_cancel (self->query_cancellable);
++  g_clear_object (&self->books_cancellable);
++  g_clear_object (&self->query_cancellable);
++  g_clear_pointer (&self->suggestions_popover, gtk_widget_unparent);
++
++  G_OBJECT_CLASS (gcal_attendees_section_parent_class)->dispose (object);
++}
++
++static void
++on_book_connected_cb (GObject      *source_object,
++                      GAsyncResult *result,
++                      gpointer      user_data)
++{
++  g_autoptr (GError) error = NULL;
++  EClient *client = e_book_client_connect_finish (result, &error);
++
++  if (!client)
++    {
++      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
++        g_debug ("Address book unavailable for guest suggestions: %s", error->message);
++      return;
++    }
++
++  g_ptr_array_add (GCAL_ATTENDEES_SECTION (user_data)->books, client);
++}
++
++static void
++on_registry_ready_cb (GObject      *source_object,
++                      GAsyncResult *result,
++                      gpointer      user_data)
++{
++  g_autoptr (ESourceRegistry) registry = e_source_registry_new_finish (result, NULL);
++  GcalAttendeesSection *self = user_data;
++  GList *sources;
++
++  if (!registry || g_cancellable_is_cancelled (self->books_cancellable))
++    return;
++
++  sources = e_source_registry_list_enabled (registry, E_SOURCE_EXTENSION_ADDRESS_BOOK);
++  for (GList *l = sources; l != NULL; l = l->next)
++    e_book_client_connect (l->data, 5, self->books_cancellable, on_book_connected_cb, self);
++  g_list_free_full (sources, g_object_unref);
++}
++
++typedef struct
++{
++  GcalAttendeesSection *self;
++  guint                 serial;
++  gchar                *text; /* casefolded */
++} SuggestionQuery;
++
++/* 0 when the name, a word of it, or the email starts with the typed text; 1 otherwise */
++static gint
++suggestion_rank (EContact    *contact,
++                 const gchar *text)
++{
++  const gchar *name = e_contact_get_const (contact, E_CONTACT_FULL_NAME);
++  const gchar *email = e_contact_get_const (contact, E_CONTACT_EMAIL_1);
++  g_autofree gchar *words = g_strconcat (" ", name ? name : "", NULL);
++  g_autofree gchar *folded_words = g_utf8_casefold (words, -1);
++  g_autofree gchar *folded_email = email ? g_utf8_casefold (email, -1) : NULL;
++  g_autofree gchar *word_start = g_strconcat (" ", text, NULL);
++
++  return strstr (folded_words, word_start) || (folded_email && g_str_has_prefix (folded_email, text)) ? 0 : 1;
++}
++
++static gint
++compare_suggestions (gconstpointer a,
++                     gconstpointer b,
++                     gpointer      text)
++{
++  return suggestion_rank ((EContact *) a, text) - suggestion_rank ((EContact *) b, text);
++}
++
++static gboolean
++is_invited (GcalAttendeesSection *self,
++            const gchar          *email)
++{
++  for (guint i = 0; self->attendees && i < g_list_model_get_n_items (self->attendees); i++)
++    {
++      g_autoptr (GcalEventAttendee) attendee = g_list_model_get_item (self->attendees, i);
++      const gchar *uri = gcal_event_attendee_get_uri (attendee);
++
++      if (uri && g_ascii_strcasecmp (uri + (g_str_has_prefix (uri, "mailto:") ? 7 : 0), email) == 0)
++        return TRUE;
++    }
++
++  return FALSE;
++}
++
++static gboolean
++is_suggested (GcalAttendeesSection *self,
++              const gchar          *email)
++{
++  GtkListBoxRow *row;
++
++  for (gint i = 0; (row = gtk_list_box_get_row_at_index (self->suggestions, i)) != NULL; i++)
++    {
++      if (g_ascii_strcasecmp (g_object_get_data (G_OBJECT (row), "email"), email) == 0)
++        return TRUE;
++    }
++
++  return FALSE;
++}
++
++static void
++on_contacts_found_cb (GObject      *source_object,
++                      GAsyncResult *result,
++                      gpointer      user_data)
++{
++  SuggestionQuery *query = user_data;
++  GcalAttendeesSection *self = query->self;
++  g_autofree gchar *text = query->text;
++  GSList *contacts = NULL;
++  GtkWidget *focus;
++  GtkRoot *root;
++
++  gboolean current;
++
++  current = e_book_client_get_contacts_finish (E_BOOK_CLIENT (source_object), result, &contacts, NULL) &&
++            query->serial == self->query_serial;
++  g_free (query);
++  if (!current)
++    {
++      g_slist_free_full (contacts, g_object_unref);
++      return;
++    }
++
++  contacts = g_slist_sort_with_data (contacts, compare_suggestions, text);
++
++  for (GSList *l = contacts; l != NULL; l = l->next)
++    {
++      const gchar *name = e_contact_get_const (l->data, E_CONTACT_FULL_NAME);
++      GList *emails = e_contact_get (l->data, E_CONTACT_EMAIL);
++
++      for (GList *e = emails; e != NULL && gtk_list_box_get_row_at_index (self->suggestions, 7) == NULL; e = e->next)
++        {
++          const gchar *email = e->data;
++          GtkWidget *row;
++
++          if (!is_email (email) || is_invited (self, email) || is_suggested (self, email))
++            continue;
++
++          row = adw_action_row_new ();
++          adw_preferences_row_set_use_markup (ADW_PREFERENCES_ROW (row), FALSE);
++          adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), name && *name ? name : email);
++          if (name && *name)
++            adw_action_row_set_subtitle (ADW_ACTION_ROW (row), email);
++          gtk_list_box_row_set_activatable (GTK_LIST_BOX_ROW (row), TRUE);
++          g_object_set_data_full (G_OBJECT (row), "email", g_strdup (email), g_free);
++          g_object_set_data_full (G_OBJECT (row), "name", g_strdup (name), g_free);
++          gtk_list_box_append (self->suggestions, row);
++        }
++
++      g_list_free_full (emails, g_free);
++    }
++
++  g_slist_free_full (contacts, g_object_unref);
++
++  root = gtk_widget_get_root (GTK_WIDGET (self->add_guest_row));
++  focus = root ? gtk_root_get_focus (root) : NULL;
++  if (gtk_list_box_get_row_at_index (self->suggestions, 0) && focus &&
++      gtk_widget_is_ancestor (focus, GTK_WIDGET (self->add_guest_row)))
++    {
++      gtk_list_box_select_row (self->suggestions, gtk_list_box_get_row_at_index (self->suggestions, 0));
++      gtk_widget_set_size_request (GTK_WIDGET (self->suggestions),
++                                   MAX (240, gtk_widget_get_width (GTK_WIDGET (self->add_guest_row)) - 24), -1);
++      gtk_popover_popup (GTK_POPOVER (self->suggestions_popover));
++    }
++}
++
++static void
++on_add_guest_row_changed_cb (GcalAttendeesSection *self)
++{
++  g_autofree gchar *text = g_strstrip (g_strdup (gtk_editable_get_text (GTK_EDITABLE (self->add_guest_row))));
++  g_autoptr (EBookQuery) query = NULL;
++  g_autofree gchar *sexp = NULL;
++  EBookQuery *terms[3];
++
++  self->query_serial++;
++  g_cancellable_cancel (self->query_cancellable);
++  g_clear_object (&self->query_cancellable);
++  gtk_list_box_remove_all (self->suggestions);
++  gtk_widget_remove_css_class (GTK_WIDGET (self->add_guest_row), "error");
++
++  if (g_utf8_strlen (text, -1) < 2 || !self->books || self->books->len == 0)
++    {
++      gtk_popover_popdown (GTK_POPOVER (self->suggestions_popover));
++      return;
++    }
++
++  terms[0] = e_book_query_field_test (E_CONTACT_EMAIL, E_BOOK_QUERY_BEGINS_WITH, text);
++  terms[1] = e_book_query_field_test (E_CONTACT_FULL_NAME, E_BOOK_QUERY_CONTAINS, text);
++  terms[2] = e_book_query_field_test (E_CONTACT_NICKNAME, E_BOOK_QUERY_BEGINS_WITH, text);
++  query = e_book_query_or (3, terms, TRUE);
++  sexp = e_book_query_to_string (query);
++
++  self->query_cancellable = g_cancellable_new ();
++  for (guint i = 0; i < self->books->len; i++)
++    {
++      SuggestionQuery *data = g_new0 (SuggestionQuery, 1);
++
++      data->self = self;
++      data->serial = self->query_serial;
++      data->text = g_utf8_casefold (text, -1);
++      e_book_client_get_contacts (g_ptr_array_index (self->books, i), sexp, self->query_cancellable,
++                                  on_contacts_found_cb, data);
++    }
++}
++
++static void
++on_suggestion_activated_cb (GtkListBox           *list,
++                            GtkListBoxRow        *row,
++                            GcalAttendeesSection *self)
++{
++  gtk_list_box_select_row (self->suggestions, row);
++  gtk_editable_set_text (GTK_EDITABLE (self->add_guest_row), g_object_get_data (G_OBJECT (row), "email"));
++  on_add_guest_row_apply_cb (self);
++  gtk_widget_grab_focus (GTK_WIDGET (self->add_guest_row));
++}
++
++/* Arrows move through the suggestions while the keyboard stays in the email field. */
++static gboolean
++on_add_guest_row_key_pressed_cb (GtkEventControllerKey *controller,
++                                 guint                  keyval,
++                                 guint                  keycode,
++                                 GdkModifierType        state,
++                                 GcalAttendeesSection  *self)
++{
++  GtkListBoxRow *selected, *next;
++  gint index;
++
++  if (!gtk_widget_get_visible (self->suggestions_popover))
++    return GDK_EVENT_PROPAGATE;
++
++  selected = gtk_list_box_get_selected_row (self->suggestions);
++  index = selected ? gtk_list_box_row_get_index (selected) : -1;
++
++  switch (keyval)
++    {
++    case GDK_KEY_Down:
++    case GDK_KEY_KP_Down:
++    case GDK_KEY_Up:
++    case GDK_KEY_KP_Up:
++      index += keyval == GDK_KEY_Down || keyval == GDK_KEY_KP_Down ? 1 : -1;
++      next = gtk_list_box_get_row_at_index (self->suggestions, MAX (index, 0));
++      if (next)
++        gtk_list_box_select_row (self->suggestions, next);
++      return GDK_EVENT_STOP;
++
++    case GDK_KEY_Escape:
++      gtk_popover_popdown (GTK_POPOVER (self->suggestions_popover));
++      return GDK_EVENT_STOP;
++
++    default:
++      return GDK_EVENT_PROPAGATE;
++    }
++}
++
+ static void
+ gcal_attendees_section_init (GcalAttendeesSection *instance)
+ {
++  GtkEventController *keys;
++
+   gtk_widget_init_template (GTK_WIDGET (instance));
++
++  instance->books = g_ptr_array_new_with_free_func (g_object_unref);
++  instance->books_cancellable = g_cancellable_new ();
++  e_source_registry_new (instance->books_cancellable, on_registry_ready_cb, instance);
++
++  instance->suggestions = GTK_LIST_BOX (gtk_list_box_new ());
++  gtk_list_box_set_selection_mode (instance->suggestions, GTK_SELECTION_SINGLE);
++  /* Plain rows with a highlight, not a card inside the popover */
++  gtk_widget_add_css_class (GTK_WIDGET (instance->suggestions), "navigation-sidebar");
++  g_signal_connect (instance->suggestions, "row-activated", G_CALLBACK (on_suggestion_activated_cb), instance);
++
++  /* Not autohide: an autohide popover would take the keyboard away from the entry while typing. */
++  instance->suggestions_popover = gtk_popover_new ();
++  gtk_popover_set_autohide (GTK_POPOVER (instance->suggestions_popover), FALSE);
++  gtk_popover_set_has_arrow (GTK_POPOVER (instance->suggestions_popover), FALSE);
++  gtk_popover_set_position (GTK_POPOVER (instance->suggestions_popover), GTK_POS_BOTTOM);
++  /* Leave a gap below the field instead of drawing over its edge */
++  gtk_popover_set_offset (GTK_POPOVER (instance->suggestions_popover), 0, 6);
++  gtk_popover_set_child (GTK_POPOVER (instance->suggestions_popover), GTK_WIDGET (instance->suggestions));
++  gtk_widget_set_parent (instance->suggestions_popover, GTK_WIDGET (instance->add_guest_row));
++
++  g_signal_connect_swapped (instance->add_guest_row, "changed", G_CALLBACK (on_add_guest_row_changed_cb), instance);
++
++  keys = gtk_event_controller_key_new ();
++  gtk_event_controller_set_propagation_phase (keys, GTK_PHASE_CAPTURE);
++  g_signal_connect (keys, "key-pressed", G_CALLBACK (on_add_guest_row_key_pressed_cb), instance);
++  gtk_widget_add_controller (GTK_WIDGET (instance->add_guest_row), keys);
++
++  instance->guest_rows = g_ptr_array_new ();
+ }
+ 
+ static void
+@@ -151,6 +526,7 @@ gcal_attendees_section_class_init (GcalAttendeesSectionClass *klass)
+   g_type_ensure (GCAL_TYPE_ORGANIZER_ROW);
+   g_type_ensure (GCAL_TYPE_ATTENDEE_SUMMARY_ROW);
+ 
++  object_class->dispose = gcal_attendees_section_dispose;
+   object_class->finalize = gcal_attendees_section_finalize;
+   object_class->get_property = gcal_attendees_section_get_property;
+   object_class->set_property = gcal_attendees_section_set_property;
+@@ -184,4 +560,139 @@ gcal_attendees_section_class_init (GcalAttendeesSectionClass *klass)
+   gtk_widget_class_set_template_from_resource (widget_class, "/org/gnome/calendar/ui/event-editor/gcal-attendees-section.ui");
+ 
+   gtk_widget_class_bind_template_child (widget_class, GcalAttendeesSection, summary_row);
++  gtk_widget_class_bind_template_child (widget_class, GcalAttendeesSection, organizer_row);
++  gtk_widget_class_bind_template_child (widget_class, GcalAttendeesSection, add_guest_row);
++  gtk_widget_class_bind_template_child (widget_class, GcalAttendeesSection, meet_row);
++  gtk_widget_class_bind_template_child (widget_class, GcalAttendeesSection, join_row);
++
++  gtk_widget_class_bind_template_callback (widget_class, on_join_button_clicked_cb);
++
++  gtk_widget_class_bind_template_callback (widget_class, on_add_guest_row_apply_cb);
++}
++
++/**
++ * gcal_attendees_section_refresh:
++ * @self: a #GcalAttendeesSection
++ *
++ * Re-reads the organizer after the event's participants changed.
++ */
++void
++gcal_attendees_section_refresh (GcalAttendeesSection *self)
++{
++  GcalEvent *event = gcal_event_editor_section_get_event (GCAL_EVENT_EDITOR_SECTION (self));
++  const gchar *organizer_uri;
++
++  self->organizer = event ? gcal_event_get_organizer (event) : NULL;
++  organizer_uri = self->organizer ? gcal_event_organizer_get_uri (self->organizer) : NULL;
++  /* When editing, the organizer is the first guest row instead. */
++  gtk_widget_set_visible (self->organizer_row, self->organizer != NULL && !self->can_edit_guests);
++
++  for (guint i = 0; i < self->guest_rows->len; i++)
++    adw_preferences_group_remove (ADW_PREFERENCES_GROUP (self), g_ptr_array_index (self->guest_rows, i));
++  g_ptr_array_set_size (self->guest_rows, 0);
++
++  for (guint i = 0; self->can_edit_guests && self->attendees && i < g_list_model_get_n_items (self->attendees); i++)
++    {
++      g_autoptr (GcalEventAttendee) attendee = g_list_model_get_item (self->attendees, i);
++      GtkWidget *row = gcal_attendee_row_new (attendee);
++
++      if (organizer_uri && g_ascii_strcasecmp (gcal_event_attendee_get_uri (attendee), organizer_uri) == 0)
++        {
++          const gchar *email = adw_action_row_get_subtitle (ADW_ACTION_ROW (row));
++          g_autofree gchar *subtitle = email && *email ? g_strdup_printf ("%s · %s", email, gettext ("Organizer"))
++                                                       : g_strdup (gettext ("Organizer"));
++
++          adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
++        }
++      else
++        {
++          gcal_attendee_row_set_removable (GCAL_ATTENDEE_ROW (row), TRUE);
++        }
++
++      adw_preferences_group_add (ADW_PREFERENCES_GROUP (self), row);
++      g_ptr_array_add (self->guest_rows, row);
++    }
++
++  /* The summary rows copy the guest list when it is set, so hand it over again. */
++  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ATTENDEES]);
++  gtk_widget_set_visible (GTK_WIDGET (self),
++                          self->organizer != NULL || gtk_widget_get_visible (GTK_WIDGET (self->add_guest_row)) ||
++                          gtk_widget_get_visible (GTK_WIDGET (self->join_row)));
++  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ORGANIZER]);
++}
++
++/**
++ * gcal_attendees_section_set_calendar:
++ * @self: a #GcalAttendeesSection
++ * @calendar: (nullable): the calendar the event will be saved to
++ * @writable: whether the event can be edited
++ *
++ * Shows the guest and video call controls the calendar supports.
++ */
++void
++gcal_attendees_section_set_calendar (GcalAttendeesSection *self,
++                                     GcalCalendar         *calendar,
++                                     gboolean              writable)
++{
++  GcalEvent *event = gcal_event_editor_section_get_event (GCAL_EVENT_EDITOR_SECTION (self));
++  g_autofree gchar *meeting_url = NULL;
++  ECalClient *client = calendar ? gcal_calendar_get_client (calendar) : NULL;
++  gboolean can_invite;
++
++  g_clear_pointer (&self->own_email, g_free);
++  /* Only calendars whose server sends the invitations, like Google, can add guests. */
++  can_invite = writable && client && e_cal_client_check_save_schedules (client) &&
++               e_client_get_backend_property_sync (E_CLIENT (client), E_CAL_BACKEND_PROPERTY_CAL_EMAIL_ADDRESS,
++                                                   &self->own_email, NULL, NULL) &&
++               self->own_email && *self->own_email;
++
++  if (event)
++    gcal_utils_extract_meeting_url (gcal_event_get_description (event), NULL, &meeting_url);
++
++  g_free (self->meeting_url);
++  self->meeting_url = g_strdup (meeting_url);
++  gtk_widget_set_visible (GTK_WIDGET (self->join_row), meeting_url != NULL);
++  adw_action_row_set_subtitle (self->join_row, meeting_url ? meeting_url : "");
++
++  /* Invitations from others also live in writable calendars; only their organizer may change guests. */
++  if (event && gcal_event_get_organizer (event))
++    {
++      const gchar *organizer = gcal_event_organizer_get_uri (gcal_event_get_organizer (event));
++
++      writable = writable && self->own_email && organizer &&
++                 g_ascii_strcasecmp (organizer + (g_str_has_prefix (organizer, "mailto:") ? 7 : 0), self->own_email) == 0;
++    }
++
++  self->can_edit_guests = can_invite && writable;
++  gtk_widget_set_visible (GTK_WIDGET (self->add_guest_row), self->can_edit_guests);
++  gtk_widget_set_visible (GTK_WIDGET (self->meet_row),
++                          writable && !meeting_url && gcal_google_meet_is_supported (calendar));
++  if (!gtk_widget_get_visible (GTK_WIDGET (self->meet_row)))
++    adw_switch_row_set_active (self->meet_row, FALSE);
++
++  gcal_attendees_section_refresh (self);
++}
++
++/**
++ * gcal_attendees_section_get_add_meet:
++ * @self: a #GcalAttendeesSection
++ *
++ * Returns: %TRUE if the user asked for a Google Meet call on save
++ */
++gboolean
++gcal_attendees_section_get_add_meet (GcalAttendeesSection *self)
++{
++  return gtk_widget_get_visible (GTK_WIDGET (self->meet_row)) && adw_switch_row_get_active (self->meet_row);
++}
++
++/**
++ * gcal_attendees_section_get_can_edit_guests:
++ * @self: a #GcalAttendeesSection
++ *
++ * Returns: %TRUE if the user organizes the event and its calendar sends invitations
++ */
++gboolean
++gcal_attendees_section_get_can_edit_guests (GcalAttendeesSection *self)
++{
++  return self->can_edit_guests;
+ }
+diff --git a/src/gui/event-editor/gcal-attendees-section.h b/src/gui/event-editor/gcal-attendees-section.h
+index a882d5d..9460b7d 100644
+--- a/src/gui/event-editor/gcal-attendees-section.h
++++ b/src/gui/event-editor/gcal-attendees-section.h
+@@ -20,6 +20,7 @@
+ 
+ #include <adwaita.h>
+ 
++#include "gcal-calendar.h"
+ #include "gcal-event-editor-section.h"
+ 
+ G_BEGIN_DECLS
+@@ -27,4 +28,14 @@ G_BEGIN_DECLS
+ #define GCAL_TYPE_ATTENDEES_SECTION (gcal_attendees_section_get_type ())
+ G_DECLARE_FINAL_TYPE (GcalAttendeesSection, gcal_attendees_section, GCAL, ATTENDEES_SECTION, GcalEventEditorSection)
+ 
++void                 gcal_attendees_section_refresh              (GcalAttendeesSection *self);
++
++void                 gcal_attendees_section_set_calendar         (GcalAttendeesSection *self,
++                                                                  GcalCalendar         *calendar,
++                                                                  gboolean              writable);
++
++gboolean             gcal_attendees_section_get_add_meet         (GcalAttendeesSection *self);
++
++gboolean             gcal_attendees_section_get_can_edit_guests  (GcalAttendeesSection *self);
++
+ G_END_DECLS
+diff --git a/src/gui/event-editor/gcal-event-editor-dialog.c b/src/gui/event-editor/gcal-event-editor-dialog.c
+index 5700265..c474a5d 100644
+--- a/src/gui/event-editor/gcal-event-editor-dialog.c
++++ b/src/gui/event-editor/gcal-event-editor-dialog.c
+@@ -25,6 +25,7 @@
+ #include "gcal-context.h"
+ #include "gcal-debug.h"
+ #include "gcal-event-attendee.h"
++#include "gcal-google-meet.h"
+ #include "gcal-event-editor-dialog.h"
+ #include "gcal-event-editor-section.h"
+ #include "gcal-event.h"
+@@ -165,8 +166,6 @@ set_event (GcalEventEditorDialog *self,
+   gcal_calendar_combo_row_set_calendar (self->calendar_combo_row, calendar);
+ 
+   set_writable (self, !gcal_calendar_is_read_only (calendar));
+-  gboolean has_participants = gcal_event_get_organizer (self->edited_event) != NULL;
+-  gtk_widget_set_visible (GTK_WIDGET (self->attendees_section), has_participants);
+ 
+   gtk_widget_set_visible (self->cancel_button, self->writable);
+ 
+@@ -178,9 +177,30 @@ set_event (GcalEventEditorDialog *self,
+ 
+   g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_EVENT]);
+ 
++  gcal_attendees_section_set_calendar (GCAL_ATTENDEES_SECTION (self->attendees_section), calendar, self->writable);
++
+   GCAL_EXIT;
+ }
+ 
++static void
++on_calendar_combo_row_calendar_changed_cb (GcalEventEditorDialog *self)
++{
++  if (!self->edited_event)
++    return;
++
++  gcal_attendees_section_set_calendar (GCAL_ATTENDEES_SECTION (self->attendees_section),
++                                       gcal_calendar_combo_row_get_calendar (self->calendar_combo_row),
++                                       self->writable);
++}
++
++static void
++maybe_add_google_meet (GcalEventEditorDialog *self,
++                       GcalEvent             *event)
++{
++  if (gcal_attendees_section_get_add_meet (GCAL_ATTENDEES_SECTION (self->attendees_section)))
++    gcal_google_meet_add (event);
++}
++
+ static void
+ clear_and_hide_dialog (GcalEventEditorDialog *self)
+ {
+@@ -226,6 +246,7 @@ apply_event_properties_to_template_event (GcalEvent *template_event,
+   gcal_event_set_all_day (template_event, gcal_event_get_all_day (event));
+   gcal_event_set_date_start (template_event, start_date);
+   gcal_event_set_date_end (template_event, end_date);
++  gcal_event_copy_attendees (template_event, event);
+ 
+   gcal_event_remove_all_alarms (template_event);
+   for (GList *l = alarms; l != NULL; l = l->next)
+@@ -263,6 +284,8 @@ set_up_context (GcalEventEditorDialog *self)
+   flatten_model = gtk_flatten_list_model_new (G_LIST_MODEL (g_steal_pointer (&all_calendars)));
+ 
+   adw_combo_row_set_model (ADW_COMBO_ROW (self->calendar_combo_row), G_LIST_MODEL (flatten_model));
++  g_signal_connect_swapped (self->calendar_combo_row, "notify::calendar",
++                            G_CALLBACK (on_calendar_combo_row_calendar_changed_cb), self);
+ 
+   GCAL_EXIT;
+ }
+@@ -288,17 +311,22 @@ save_event (GcalEventEditorDialog *self,
+   alarms_equal = gcal_event_alarms_equal (self->event, self->edited_event);
+   schedule_equal = gcal_event_schedule_equal (self->event, self->edited_event);
+   strings_equal = gcal_event_strings_equal (self->event, self->edited_event);
+-  event_equal = calendar_equal && alarms_equal && schedule_equal && strings_equal;
++  event_equal = calendar_equal && alarms_equal && schedule_equal && strings_equal &&
++                gcal_event_attendees_equal (self->event, self->edited_event);
+ 
+   if (self->event_is_new)
+     {
+       gcal_event_set_calendar (self->edited_event, selected_calendar);
+       gcal_manager_create_event (manager, self->edited_event);
++      maybe_add_google_meet (self, self->edited_event);
+       GCAL_RETURN (TRUE);
+     }
+ 
+   if (event_equal)
+-    GCAL_RETURN (TRUE);
++    {
++      maybe_add_google_meet (self, self->edited_event);
++      GCAL_RETURN (TRUE);
++    }
+ 
+   if (!calendar_equal)
+     {
+@@ -319,10 +347,25 @@ save_event (GcalEventEditorDialog *self,
+     }
+ 
+   gcal_manager_update_event (manager, self->edited_event, GCAL_RECURRENCE_MOD_THIS_ONLY);
++  maybe_add_google_meet (self, self->edited_event);
+ 
+   GCAL_RETURN (TRUE);
+ }
+ 
++static void
++on_remove_attendee_action_activated_cb (GtkWidget  *widget,
++                                        const char *action_name,
++                                        GVariant   *param)
++{
++  GcalEventEditorDialog *self = GCAL_EVENT_EDITOR_DIALOG (widget);
++
++  if (!self->edited_event)
++    return;
++
++  gcal_event_remove_attendee (self->edited_event, g_variant_get_string (param, NULL));
++  gcal_attendees_section_refresh (GCAL_ATTENDEES_SECTION (self->attendees_section));
++}
++
+ 
+ /*
+  * Callbacks
+@@ -347,6 +390,8 @@ on_show_attendees_detail_page_action_activated_cb (GtkWidget  *widget,
+ {
+   GcalEventEditorDialog *self = GCAL_EVENT_EDITOR_DIALOG (widget);
+ 
++  gcal_attendee_details_page_set_removable (GCAL_ATTENDEE_DETAILS_PAGE (self->attendee_details_page),
++                                            gcal_attendees_section_get_can_edit_guests (GCAL_ATTENDEES_SECTION (self->attendees_section)));
+   gcal_attendee_details_page_set_attendees (GCAL_ATTENDEE_DETAILS_PAGE (self->attendee_details_page),
+                                             self->attendees_model);
+ 
+@@ -476,6 +521,8 @@ on_ask_recurrence_response_save_cb (GcalEvent             *event,
+       break;
+     }
+ 
++  maybe_add_google_meet (self, self->edited_event);
++
+   clear_and_hide_dialog (self);
+ 
+   GCAL_EXIT;
+@@ -638,6 +685,8 @@ gcal_event_editor_dialog_class_init (GcalEventEditorDialogClass *klass)
+   gtk_widget_class_install_action (widget_class, "event-editor.save", NULL, on_event_editor_save_action_activated_cb);
+   gtk_widget_class_install_action (widget_class, "event-editor.show-attendees-detail-page", "u",
+                                    on_show_attendees_detail_page_action_activated_cb);
++  gtk_widget_class_install_action (widget_class, "event-editor.remove-attendee", "s",
++                                   on_remove_attendee_action_activated_cb);
+ }
+ 
+ static void
+diff --git a/src/gui/event-editor/gcal-organizer-row.c b/src/gui/event-editor/gcal-organizer-row.c
+index 8ac6374..ccb5c60 100644
+--- a/src/gui/event-editor/gcal-organizer-row.c
++++ b/src/gui/event-editor/gcal-organizer-row.c
+@@ -89,6 +89,9 @@ generate_subtitle (GcalOrganizerRow   *self,
+     return NULL;
+ 
+   email = gcal_get_email_from_mailto_uri (gcal_event_organizer_get_uri (organizer));
++  if (!gcal_event_organizer_get_name (organizer) || !*gcal_event_organizer_get_name (organizer))
++    return g_strdup (email);
++
+   name_with_email = g_strdup_printf ("%s (%s)", gcal_event_organizer_get_name (organizer), email);
+ 
+   return g_strdup (name_with_email);
+diff --git a/src/gui/gcal-window.c b/src/gui/gcal-window.c
+index 61fae4c..7a8a964 100644
+--- a/src/gui/gcal-window.c
++++ b/src/gui/gcal-window.c
+@@ -222,7 +222,10 @@ update_today_action_enabled (GcalWindow *window)
+ static void
+ focus_last_focused_widget (GcalWindow *self)
+ {
+-  if (self->last_focused_widget && gtk_widget_grab_focus (self->last_focused_widget))
++  /* A deleted event's widget is hidden; focusing it scrolls the week view to the top */
++  if (self->last_focused_widget &&
++      gtk_widget_get_mapped (self->last_focused_widget) &&
++      gtk_widget_grab_focus (self->last_focused_widget))
+     g_clear_weak_pointer (&self->last_focused_widget);
+ }
+ 
+diff --git a/src/meson.build b/src/meson.build
+index d22917a..9ee8677 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -6,7 +6,9 @@ gcal_deps = [
+   libedataserverui_dep,
+   libedataserver_dep,
+   libecal_dep,
++  libebook_dep,
+   libsoup_dep,
++  json_glib_dep,
+   libical_dep,
+   fribidi_dep,
+   glib_dep,
+diff --git a/src/utils/gcal-utils.c b/src/utils/gcal-utils.c
+index bd5fc81..dcc6bea 100644
+--- a/src/utils/gcal-utils.c
++++ b/src/utils/gcal-utils.c
+@@ -1143,7 +1143,7 @@ gcal_utils_extract_google_section (const gchar  *description,
+ 
+       google_section_start = first_delimiter + delimiter_len;
+       meet_url_start = g_strstr_len (google_section_start,
+-                                     first_delimiter - description - delimiter_len,
++                                     last_delimiter - google_section_start,
+                                      "https://meet.google.com");
+       if (meet_url_start)
+         meeting_url = g_utf8_substring (meet_url_start, 0, strlen ("https://meet.google.com/xxx-xxxx-xxx"));
+diff --git a/tests/test-event.c b/tests/test-event.c
+index 848210b..748aa00 100644
+--- a/tests/test-event.c
++++ b/tests/test-event.c
+@@ -574,6 +574,40 @@ event_schedule_equal (void)
+ 
+ /*********************************************************************************************************************/
+ 
++static void
++event_edit_attendees (void)
++{
++  g_autoptr (GcalEvent) original = NULL;
++  g_autoptr (GcalEvent) event = NULL;
++  g_autoptr (GError) error = NULL;
++  g_autofree gchar *ical = NULL;
++
++  original = create_event_for_string (STUB_EVENT, &error);
++  g_assert_no_error (error);
++  event = gcal_event_new_from_event (original);
++  g_assert_null (gcal_event_get_organizer (event));
++
++  /* The first guest makes the calendar owner the organizer and an accepted participant. */
++  g_assert_true (gcal_event_add_attendee (event, "guest@example.com", "Guest", "me@example.com"));
++  g_assert_false (gcal_event_add_attendee (event, "GUEST@example.com", NULL, "me@example.com"));
++  g_assert_cmpstr (gcal_event_organizer_get_uri (gcal_event_get_organizer (event)), ==, "mailto:me@example.com");
++  g_assert_cmpuint (g_list_model_get_n_items (gcal_event_get_attendees (event)), ==, 2);
++  g_assert_false (gcal_event_attendees_equal (original, event));
++  ical = e_cal_component_get_as_string (gcal_event_get_component (event));
++  g_assert_nonnull (strstr (ical, "RSVP=TRUE"));
++  g_assert_nonnull (strstr (ical, "CN=Guest"));
++
++  g_assert_true (gcal_event_add_attendee (event, "other@example.com", NULL, "me@example.com"));
++  gcal_event_remove_attendee (event, "mailto:other@example.com");
++  g_assert_cmpuint (g_list_model_get_n_items (gcal_event_get_attendees (event)), ==, 2);
++
++  /* Removing the last guest turns it back into a plain event. */
++  gcal_event_remove_attendee (event, "mailto:guest@example.com");
++  g_assert_null (gcal_event_get_organizer (event));
++  g_assert_cmpuint (g_list_model_get_n_items (gcal_event_get_attendees (event)), ==, 0);
++  g_assert_true (gcal_event_attendees_equal (original, event));
++}
++
+ gint
+ main (gint   argc,
+       gchar *argv[])
+@@ -595,6 +629,7 @@ main (gint   argc,
+   g_test_add_func ("/event/date/create-tzid", event_date_create_tzid);
+   g_test_add_func ("/event/date/check-tz", event_date_check_tz);
+   g_test_add_func ("/event/date/get-attendees", event_get_attendees);
++  g_test_add_func ("/event/attendees/edit", event_edit_attendees);
+   g_test_add_func ("/event/equal/schedule", event_schedule_equal);
+ 
+   return g_test_run ();
+diff --git a/tests/test-utils.c b/tests/test-utils.c
+index fb23475..cfeb362 100644
+--- a/tests/test-utils.c
++++ b/tests/test-utils.c
+@@ -189,6 +189,27 @@ extract_meeting_url (void)
+   g_assert_cmpstr (meeting_url, ==, "https://teams.microsoft.com/meet/12345678912345?p=0AbCdEfGjKLm1nOjTj");
+ }
+ 
++
++/* Google's current layout (dial-in lines), with more notes before it than the delimiter is long */
++#define GOOGLE_SAMPLE_DESCRIPTION_WITH_LONG_NOTES \
++"Agenda: review the roadmap for next quarter, assign owners, and agree on the launch date.\n\n" \
++"-::~:~::~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~::~:~::-\n" \
++"Únase con Google Meet: https://meet.google.com/abc-defg-hij\n"                             \
++"O marca: (MX) +52 55 0000 0000 PIN: 123456789#\n"                                          \
++"Más números de teléfono: https://tel.meet/abc-defg-hij?pin=123456789&hs=7\n"             \
++"\n"                                                                                        \
++"No edites esta sección.\n"                                                                 \
++"-::~:~::~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~::~:~::-"
++
++static void
++extract_meeting_url_after_long_notes (void)
++{
++  g_autofree char *meeting_url = NULL;
++
++  gcal_utils_extract_meeting_url (GOOGLE_SAMPLE_DESCRIPTION_WITH_LONG_NOTES, NULL, &meeting_url);
++  g_assert_cmpstr (meeting_url, ==, "https://meet.google.com/abc-defg-hij");
++}
++
+ /*********************************************************************************************************************/
+ 
+ gint
+@@ -202,6 +223,7 @@ main (gint   argc,
+ 
+   g_test_add_func ("/utils/date-time/date_time_from_icaltime", date_time_from_icaltime);
+   g_test_add_func ("/utils/misc/extract_meeting_url", extract_meeting_url);
++  g_test_add_func ("/utils/misc/extract_meeting_url_after_long_notes", extract_meeting_url_after_long_notes);
+ 
+   return g_test_run ();
+ }
