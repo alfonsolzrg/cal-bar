@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = [
     'VERSION', 'LICENSE', 'README.md', 'install.sh', 'metadata.json', 'extension.js', 'prefs.js',
     'stylesheet.css', 'cal_bar.py', 'cal_bar_ctl.py', 'app_logic.py', 'companion_runtime.py',
-    'companion_ui.py', 'companion.css', 'gnome_calendar.py', 'google_calendar.py',
+    'reminder_melodies.py', 'companion_ui.py', 'companion.css', 'gnome_calendar.py', 'google_calendar.py',
     'schemas/org.gnome.shell.extensions.cal-bar.gschema.xml',
-    'docs/screenshots/meeting-info.png', 'docs/screenshots/reminder.png',
+    'docs/melody-sources.md', 'docs/screenshots/meeting-info.png', 'docs/screenshots/reminder.png',
 ]
 
 

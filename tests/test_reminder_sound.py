@@ -29,6 +29,15 @@ class SoundPlayerTests(unittest.TestCase):
         launcher.setenv.assert_called_once_with('GDK_BACKEND', 'wayland', True)
         sound.process.wait_async.assert_called_once()
 
+    def test_selected_melody_uses_rendered_audio(self):
+        sound = self.sound()
+        with patch('companion_runtime.GLib.find_program_in_path', return_value='/usr/bin/canberra-gtk-play'), \
+                patch('companion_runtime.render_melody', return_value='/tmp/daybreak.wav') as render, \
+                patch('companion_runtime.Gio.SubprocessLauncher.new') as factory:
+            sound.play('daybreak')
+        self.assertEqual(render.call_args.args[0], 'daybreak')
+        self.assertIn('--file=/tmp/daybreak.wav', factory.return_value.spawnv.call_args.args[0])
+
     def test_desktop_sound_disable_prevents_playback(self):
         with patch('companion_runtime.GLib.find_program_in_path') as find:
             self.sound(enabled=False).play()

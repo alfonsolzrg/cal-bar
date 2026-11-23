@@ -8,6 +8,7 @@ gi.require_version('Adw', '1')
 from gi.repository import Adw, Gdk, GLib, Gtk
 from app_logic import LOOKAHEAD_DAYS, ICONS, meeting_status, safe_url, visible_events
 from companion_runtime import run_helper
+from reminder_melodies import MELODIES
 
 TITLES = {'agenda': 'Cal Bar — Meetings', 'reminder': 'Cal Bar — Reminder', 'dimmer': 'Cal Bar — Dimmer'}
 
@@ -178,9 +179,20 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.settings.bind('reminders-enabled', enabled, 'active', 0)
         reminders.add(enabled)
         sound = Adw.SwitchRow(title='Reminder sound',
-            subtitle='Play the desktop alarm once. Respects GNOME sound settings and mute.')
+            subtitle='Play a melody once. Respects GNOME sound settings and mute.')
         self.settings.bind('reminder-sound-enabled', sound, 'active', 0)
         reminders.add(sound)
+        keys = [item[0] for item in MELODIES]
+        melody = Adw.ComboRow(title='Melody', model=Gtk.StringList.new([item[1] for item in MELODIES]))
+        selected = self.settings.get_string('reminder-melody')
+        melody.set_selected(keys.index(selected) if selected in keys else 0)
+        melody.connect('notify::selected', lambda row, *_:
+            self.settings.set_string('reminder-melody', keys[row.get_selected()]))
+        reminders.add(melody)
+        listen = Adw.ActionRow(title='Preview melody', subtitle='About 14–15 seconds. Stops when you close settings.')
+        listen.add_suffix(button('Play', lambda: app.sound.play(self.settings.get_string('reminder-melody')), valign=Gtk.Align.CENTER))
+        listen.add_suffix(button('Stop', app.sound.stop, valign=Gtk.Align.CENTER))
+        reminders.add(listen)
         minutes = Adw.SpinRow(title='Minutes before the meeting', subtitle='0 disables advance reminders',
             adjustment=Gtk.Adjustment(lower=0, upper=60, step_increment=1, page_increment=5))
         self.settings.bind('reminder-minutes', minutes, 'value', 0)
@@ -203,6 +215,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         return False
 
     def cleanup(self):
+        self.app.sound.stop()
         if self.closed:
             return
         self.closed = True

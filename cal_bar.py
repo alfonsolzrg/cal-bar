@@ -271,7 +271,7 @@ class CalBarApplication(Adw.Application):
         self.tick()
         self.request_presentation('reminder')
         if self.settings.get_boolean('reminder-sound-enabled'):
-            self.sound.play()
+            self.sound.play(self.settings.get_string('reminder-melody'))
 
     def dismiss_reminder(self):
         self.sound.stop()

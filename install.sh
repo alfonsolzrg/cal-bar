@@ -12,7 +12,7 @@ if ! cmp -s "$source_dir/extension.js" "$bridge_dir/extension.js" || \
     bridge_changed=true
 fi
 mkdir -p "$app_dir/schemas" "$bridge_dir/schemas" "$bin_dir" "$data_dir/applications" "$data_dir/dbus-1/services"
-for file in cal_bar.py cal_bar_ctl.py app_logic.py companion_runtime.py companion_ui.py companion.css gnome_calendar.py google_calendar.py VERSION; do
+for file in cal_bar.py cal_bar_ctl.py app_logic.py companion_runtime.py reminder_melodies.py companion_ui.py companion.css gnome_calendar.py google_calendar.py VERSION; do
     install -m 644 "$source_dir/$file" "$app_dir/$file"
 done
 for destination in "$app_dir" "$bridge_dir"; do

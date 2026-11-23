@@ -8,7 +8,8 @@
     <key name="account-revision" type="i"><default>0</default><summary>Account connection change counter</summary></key>
     <key name="calendar-id" type="s"><default>'primary'</default><summary>Google Calendar ID</summary></key>
     <key name="reminder-minutes" type="i"><default>5</default><range min="0" max="60"/><summary>Minutes before a meeting to remind</summary></key>
-    <key name="reminder-sound-enabled" type="b"><default>true</default><summary>Play a desktop alarm when a reminder appears</summary></key>
+    <key name="reminder-melody" type="s"><default>'daybreak'</default><summary>Selected reminder melody</summary></key>
+    <key name="reminder-sound-enabled" type="b"><default>true</default><summary>Play the selected melody when a reminder appears</summary></key>
     <key name="reminders-enabled" type="b"><default>true</default><summary>Show full-screen reminders</summary></key>
   </schema>
 </schemalist>

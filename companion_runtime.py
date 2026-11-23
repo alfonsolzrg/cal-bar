@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from reminder_melodies import render_melody
 from gi.repository import Gio, GLib
 
 BUS_NAME = 'io.github.calbar.Companion'
@@ -24,7 +25,7 @@ def load_settings():
 
 
 class ReminderSound:
-    """Play one desktop-theme alarm through GNOME's libcanberra player."""
+    """Play a selected melody through GNOME's libcanberra player."""
     def __init__(self, desktop_settings=None):
         self.process = None
         self.desktop = desktop_settings
@@ -33,7 +34,7 @@ class ReminderSound:
             if schema:
                 self.desktop = Gio.Settings.new_full(schema, None, None)
 
-    def play(self):
+    def play(self, melody=None):
         self.stop()
         if self.desktop and not self.desktop.get_boolean('event-sounds'):
             return
@@ -41,7 +42,13 @@ class ReminderSound:
         if not executable:
             logging.warning('Reminder sound unavailable: install gnome-session-canberra and sound-theme-freedesktop.')
             return
-        args = [executable, '--id=alarm-clock-elapsed', '--description=Cal Bar meeting reminder',
+        sound_arg = '--id=alarm-clock-elapsed'
+        if melody is not None:
+            try:
+                sound_arg = '--file=' + str(render_melody(melody, Path(GLib.get_user_cache_dir()) / 'cal-bar'))
+            except OSError as error:
+                logging.warning('Could not render melody: %s', error)
+        args = [executable, sound_arg, '--description=Cal Bar meeting reminder',
                 '--property=media.role=event', f'--property=application.id={BUS_NAME}',
                 '--property=application.name=Cal Bar', '--loop=1']
         if self.desktop:
